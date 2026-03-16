@@ -11,6 +11,7 @@ import csTranslations from './locales/cs.json' with {type: 'json'};
 import plTranslations from './locales/pl.json' with {type: 'json'};
 import esTranslations from './locales/es.json' with {type: 'json'};
 import itTranslations from './locales/it.json' with {type: 'json'};
+import zhTWTranslations from './locales/zh-TW.json' with {type: 'json'};
 
 export {
   SUPPORTED_LANGUAGES,
@@ -47,6 +48,7 @@ const translationsMap: Record<string, Translations> = {
   pl: plTranslations,
   es: esTranslations,
   it: itTranslations,
+  'zh-TW': zhTWTranslations,
 };
 
 // In-memory cache for loaded translations
