@@ -215,7 +215,12 @@ export class TemplateService {
    * Send a test email for a template
    * Only project members can receive test emails
    */
-  public static async sendTest(projectId: string, templateId: string, testEmail: string): Promise<void> {
+  public static async sendTest(
+    projectId: string,
+    templateId: string,
+    testEmail: string,
+    draft?: {subject?: string; body?: string; from?: string; fromName?: string | null; replyTo?: string | null},
+  ): Promise<void> {
     const template = await this.get(projectId, templateId);
 
     // Validate that the test email belongs to a project member
@@ -235,8 +240,15 @@ export class TemplateService {
       throw new HttpException(403, 'Test emails can only be sent to project members');
     }
 
+    // 有 draft 內容時用 draft，否則 fallback 到 DB 版本
+    const subject = draft?.subject || template.subject;
+    const body = draft?.body || template.body;
+    const fromEmail = draft?.from || template.from;
+    const fromName = draft?.fromName !== undefined ? draft.fromName : template.fromName;
+    const replyTo = draft?.replyTo !== undefined ? draft.replyTo : template.replyTo;
+
     // Verify domain is registered and verified before sending
-    await DomainService.verifyEmailDomain(template.from, projectId);
+    await DomainService.verifyEmailDomain(fromEmail, projectId);
 
     // Get project for fallback sender name
     const project = await prisma.project.findUnique({
@@ -249,15 +261,15 @@ export class TemplateService {
 
     await sendRawEmail({
       from: {
-        name: template.fromName || project.name || 'Plunk',
-        email: template.from,
+        name: fromName || project.name || 'Plunk',
+        email: fromEmail,
       },
       to: [testEmail],
       content: {
-        subject: `[TEST] ${template.subject}`,
-        html: template.body,
+        subject: `[TEST] ${subject}`,
+        html: body,
       },
-      reply: template.replyTo || undefined,
+      reply: replyTo || undefined,
       headers: {
         'X-Plunk-Test': 'true',
       },

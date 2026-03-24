@@ -176,7 +176,7 @@ export class Templates {
   public async sendTest(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
     const {id} = req.params;
-    const {email} = req.body;
+    const {email, subject, body, from, fromName, replyTo} = req.body;
 
     if (!id) {
       return res.status(400).json({error: 'Template ID is required'});
@@ -186,7 +186,8 @@ export class Templates {
       return res.status(400).json({error: 'Email address is required'});
     }
 
-    await TemplateService.sendTest(auth.projectId!, id, email);
+    // 支援傳入 draft 內容，讓測試信使用 editor 目前的版本而非 DB 的
+    await TemplateService.sendTest(auth.projectId!, id, email, {subject, body, from, fromName, replyTo});
 
     return res.json({
       success: true,
