@@ -19,9 +19,6 @@ import {
   DialogTitle,
   Input,
   Label,
-  Popover,
-  PopoverContent,
-  PopoverAnchor,
 } from '@plunk/ui';
 import type {Workflow} from '@plunk/db';
 import type {PaginatedResponse} from '@plunk/types';
@@ -397,29 +394,26 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
           <div>
             <Label htmlFor="createEventName">Trigger Event *</Label>
             {/* Combobox: 可自由輸入 event name，同時提供已追蹤 event 的下拉建議 */}
-            <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
-              <PopoverAnchor asChild>
-                <Input
-                  id="createEventName"
-                  type="text"
-                  value={eventName}
-                  onChange={e => {
-                    setEventName(e.target.value);
-                    setEventPopoverOpen(true);
-                  }}
-                  onFocus={() => setEventPopoverOpen(true)}
-                  placeholder="e.g., contact.created, email.opened"
-                  required
-                  autoComplete="off"
-                />
-              </PopoverAnchor>
-              {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
-                <PopoverContent
-                  className="p-0"
-                  style={{width: 'var(--radix-popover-trigger-width)'}}
-                  align="start"
-                  onOpenAutoFocus={e => e.preventDefault()}
-                >
+            <div className="relative">
+              <Input
+                id="createEventName"
+                type="text"
+                value={eventName}
+                onChange={e => {
+                  setEventName(e.target.value);
+                  setEventPopoverOpen(true);
+                }}
+                onFocus={() => setEventPopoverOpen(true)}
+                onBlur={() => {
+                  // 延遲關閉，讓 CommandItem 的 onSelect 有時間觸發
+                  setTimeout(() => setEventPopoverOpen(false), 150);
+                }}
+                placeholder="e.g., contact.created, email.opened"
+                required
+                autoComplete="off"
+              />
+              {eventPopoverOpen && eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
+                <div className="absolute z-50 w-full mt-1 rounded-md border border-neutral-200 bg-white shadow-md">
                   <Command>
                     <CommandList>
                       <CommandEmpty className="py-3 text-center text-sm text-neutral-500">
@@ -443,9 +437,9 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
                       </CommandGroup>
                     </CommandList>
                   </Command>
-                </PopoverContent>
+                </div>
               )}
-            </Popover>
+            </div>
             <p className="text-xs text-neutral-500 mt-1">
               The event that triggers this workflow to start for a contact
             </p>
