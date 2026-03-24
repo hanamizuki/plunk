@@ -6,6 +6,11 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
   ConfirmDialog,
   Dialog,
   DialogContent,
@@ -14,6 +19,9 @@ import {
   DialogTitle,
   Input,
   Label,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from '@plunk/ui';
 import type {Workflow} from '@plunk/db';
 import type {PaginatedResponse} from '@plunk/types';
@@ -316,6 +324,7 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [eventName, setEventName] = useState('');
+  const [eventPopoverOpen, setEventPopoverOpen] = useState(false);
   const [allowReentry, setAllowReentry] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -387,22 +396,56 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
 
           <div>
             <Label htmlFor="createEventName">Trigger Event *</Label>
-            <Input
-              id="createEventName"
-              type="text"
-              list="createEventNameSuggestions"
-              value={eventName}
-              onChange={e => setEventName(e.target.value)}
-              placeholder="e.g., contact.created, email.opened"
-              required
-            />
-            {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
-              <datalist id="createEventNameSuggestions">
-                {eventNamesData.eventNames.map(name => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-            )}
+            {/* Combobox: 可自由輸入 event name，同時提供已追蹤 event 的下拉建議 */}
+            <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
+              <PopoverTrigger asChild>
+                <Input
+                  id="createEventName"
+                  type="text"
+                  value={eventName}
+                  onChange={e => {
+                    setEventName(e.target.value);
+                    setEventPopoverOpen(true);
+                  }}
+                  onFocus={() => setEventPopoverOpen(true)}
+                  placeholder="e.g., contact.created, email.opened"
+                  required
+                  autoComplete="off"
+                />
+              </PopoverTrigger>
+              {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
+                <PopoverContent
+                  className="p-0"
+                  style={{width: 'var(--radix-popover-trigger-width)'}}
+                  align="start"
+                  onOpenAutoFocus={e => e.preventDefault()}
+                >
+                  <Command>
+                    <CommandList>
+                      <CommandEmpty className="py-3 text-center text-sm text-neutral-500">
+                        No matching events
+                      </CommandEmpty>
+                      <CommandGroup>
+                        {eventNamesData.eventNames
+                          .filter(n => !eventName || n.toLowerCase().includes(eventName.toLowerCase()))
+                          .map(n => (
+                            <CommandItem
+                              key={n}
+                              value={n}
+                              onSelect={() => {
+                                setEventName(n);
+                                setEventPopoverOpen(false);
+                              }}
+                            >
+                              {n}
+                            </CommandItem>
+                          ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              )}
+            </Popover>
             <p className="text-xs text-neutral-500 mt-1">
               The event that triggers this workflow to start for a contact
             </p>
