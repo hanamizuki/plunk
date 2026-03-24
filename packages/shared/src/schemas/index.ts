@@ -216,7 +216,8 @@ export const WorkflowSchemas = {
 
 export const WorkflowStepConfigSchemas = {
   sendEmail: z.object({
-    templateId: uuid,
+    // templateId 在 DB 是獨立欄位（WorkflowStep.templateId），不一定存在 config JSON 中
+    templateId: uuid.optional(),
     recipient: z
       .object({
         type: z.enum(['CONTACT', 'CUSTOM']),
