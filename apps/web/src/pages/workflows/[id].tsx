@@ -26,6 +26,14 @@ import {
   SelectItemWithDescription,
   SelectTrigger,
   SelectValue,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Switch,
 } from '@plunk/ui';
 import type {Template, Workflow, WorkflowExecution, WorkflowStep, WorkflowTransition} from '@plunk/db';
@@ -793,6 +801,7 @@ function SettingsDialog({workflow, open, onOpenChange, onSave}: SettingsDialogPr
   const [description, setDescription] = useState(workflow.description ?? '');
   const [allowReentry, setAllowReentry] = useState(workflow.allowReentry ?? false);
   const [eventName, setEventName] = useState(triggerConfig?.eventName ?? '');
+  const [eventPopoverOpen, setEventPopoverOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Sync state when workflow changes or dialog opens
@@ -852,22 +861,48 @@ function SettingsDialog({workflow, open, onOpenChange, onSave}: SettingsDialogPr
 
           <div>
             <Label htmlFor="eventName">Trigger Event *</Label>
-            <Input
-              id="eventName"
-              type="text"
-              list="eventNameSuggestions"
-              value={eventName}
-              onChange={e => setEventName(e.target.value)}
-              placeholder="e.g., contact.created, email.opened"
-              required
-            />
-            {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
-              <datalist id="eventNameSuggestions">
-                {eventNamesData.eventNames.map(name => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-            )}
+            <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
+              <PopoverTrigger asChild>
+                <Input
+                  id="eventName"
+                  type="text"
+                  value={eventName}
+                  onChange={e => {
+                    setEventName(e.target.value);
+                    setEventPopoverOpen(true);
+                  }}
+                  onFocus={() => setEventPopoverOpen(true)}
+                  placeholder="e.g., contact.created, email.opened"
+                  required
+                  autoComplete="off"
+                />
+              </PopoverTrigger>
+              {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
+                <PopoverContent
+                  className="p-0"
+                  style={{width: 'var(--radix-popover-trigger-width)'}}
+                  align="start"
+                  onOpenAutoFocus={e => e.preventDefault()}
+                >
+                  <Command>
+                    <CommandList>
+                      <CommandEmpty className="py-3 text-center text-sm text-neutral-500">
+                        No matching events
+                      </CommandEmpty>
+                      <CommandGroup>
+                        {eventNamesData.eventNames
+                          .filter(n => !eventName || n.toLowerCase().includes(eventName.toLowerCase()))
+                          .map(n => (
+                            <CommandItem key={n} value={n} onSelect={() => { setEventName(n); setEventPopoverOpen(false); }}>
+                              {n}
+                            </CommandItem>
+                          ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              )}
+            </Popover>
             <p className="text-xs text-neutral-500 mt-1">
               The event that triggers this workflow to start for a contact
             </p>
@@ -954,6 +989,7 @@ function AddStepDialog({open, onOpenChange, workflowId, onSuccess}: AddStepDialo
 
   // WAIT_FOR_EVENT fields
   const [eventName, setEventName] = useState('');
+  const [eventPopoverOpen, setEventPopoverOpen] = useState(false);
   const [eventTimeoutAmount, setEventTimeoutAmount] = useState('1');
   const [eventTimeoutUnit, setEventTimeoutUnit] = useState<'minutes' | 'hours' | 'days'>('days');
 
@@ -1604,23 +1640,49 @@ function AddStepDialog({open, onOpenChange, workflowId, onSuccess}: AddStepDialo
                   <Label htmlFor="eventName" className="text-sm font-medium">
                     Event Name *
                   </Label>
-                  <Input
-                    id="eventName"
-                    type="text"
-                    list="waitForEventSuggestions"
-                    value={eventName}
-                    onChange={e => setEventName(e.target.value)}
-                    required
-                    placeholder="e.g., email.clicked, user.upgraded"
-                    className="mt-1.5"
-                  />
-                  {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
-                    <datalist id="waitForEventSuggestions">
-                      {eventNamesData.eventNames.map(name => (
-                        <option key={name} value={name} />
-                      ))}
-                    </datalist>
-                  )}
+                  <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Input
+                        id="eventName"
+                        type="text"
+                        value={eventName}
+                        onChange={e => {
+                          setEventName(e.target.value);
+                          setEventPopoverOpen(true);
+                        }}
+                        onFocus={() => setEventPopoverOpen(true)}
+                        required
+                        placeholder="e.g., email.clicked, user.upgraded"
+                        className="mt-1.5"
+                        autoComplete="off"
+                      />
+                    </PopoverTrigger>
+                    {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
+                      <PopoverContent
+                        className="p-0"
+                        style={{width: 'var(--radix-popover-trigger-width)'}}
+                        align="start"
+                        onOpenAutoFocus={e => e.preventDefault()}
+                      >
+                        <Command>
+                          <CommandList>
+                            <CommandEmpty className="py-3 text-center text-sm text-neutral-500">
+                              No matching events
+                            </CommandEmpty>
+                            <CommandGroup>
+                              {eventNamesData.eventNames
+                                .filter(n => !eventName || n.toLowerCase().includes(eventName.toLowerCase()))
+                                .map(n => (
+                                  <CommandItem key={n} value={n} onSelect={() => { setEventName(n); setEventPopoverOpen(false); }}>
+                                    {n}
+                                  </CommandItem>
+                                ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    )}
+                  </Popover>
                   <p className="text-xs text-neutral-500 mt-1.5">
                     Enter the event name to wait for, or select from previously tracked events
                   </p>
@@ -1975,6 +2037,7 @@ function EditStepDialog({step, workflowId, open, onOpenChange, onSuccess}: EditS
 
   // WAIT_FOR_EVENT fields
   const [eventName, setEventName] = useState(String(config?.eventName || ''));
+  const [eventPopoverOpen, setEventPopoverOpen] = useState(false);
   const [eventTimeoutAmount, setEventTimeoutAmount] = useState<string>(() => {
     const timeoutSeconds = Number(config?.timeout) || 86400;
     // Convert seconds to most appropriate unit
@@ -2777,23 +2840,49 @@ function EditStepDialog({step, workflowId, open, onOpenChange, onSuccess}: EditS
               <div className="space-y-4 pl-3">
                 <div>
                   <Label htmlFor="editEventName">Event Name *</Label>
-                  <Input
-                    id="editEventName"
-                    type="text"
-                    list="editEventSuggestions"
-                    value={eventName}
-                    onChange={e => setEventName(e.target.value)}
-                    required
-                    placeholder="e.g., email.clicked, user.upgraded"
-                    className="mt-1.5"
-                  />
-                  {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
-                    <datalist id="editEventSuggestions">
-                      {eventNamesData.eventNames.map(name => (
-                        <option key={name} value={name} />
-                      ))}
-                    </datalist>
-                  )}
+                  <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Input
+                        id="editEventName"
+                        type="text"
+                        value={eventName}
+                        onChange={e => {
+                          setEventName(e.target.value);
+                          setEventPopoverOpen(true);
+                        }}
+                        onFocus={() => setEventPopoverOpen(true)}
+                        required
+                        placeholder="e.g., email.clicked, user.upgraded"
+                        className="mt-1.5"
+                        autoComplete="off"
+                      />
+                    </PopoverTrigger>
+                    {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
+                      <PopoverContent
+                        className="p-0"
+                        style={{width: 'var(--radix-popover-trigger-width)'}}
+                        align="start"
+                        onOpenAutoFocus={e => e.preventDefault()}
+                      >
+                        <Command>
+                          <CommandList>
+                            <CommandEmpty className="py-3 text-center text-sm text-neutral-500">
+                              No matching events
+                            </CommandEmpty>
+                            <CommandGroup>
+                              {eventNamesData.eventNames
+                                .filter(n => !eventName || n.toLowerCase().includes(eventName.toLowerCase()))
+                                .map(n => (
+                                  <CommandItem key={n} value={n} onSelect={() => { setEventName(n); setEventPopoverOpen(false); }}>
+                                    {n}
+                                  </CommandItem>
+                                ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    )}
+                  </Popover>
                   <p className="text-xs text-neutral-500 mt-1.5">
                     Enter the event name to wait for, or select from previously tracked events
                   </p>
