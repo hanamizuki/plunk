@@ -21,7 +21,7 @@ import {
   Label,
   Popover,
   PopoverContent,
-  PopoverTrigger,
+  PopoverAnchor,
 } from '@plunk/ui';
 import type {Workflow} from '@plunk/db';
 import type {PaginatedResponse} from '@plunk/types';
@@ -398,7 +398,7 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
             <Label htmlFor="createEventName">Trigger Event *</Label>
             {/* Combobox: 可自由輸入 event name，同時提供已追蹤 event 的下拉建議 */}
             <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
-              <PopoverTrigger asChild>
+              <PopoverAnchor asChild>
                 <Input
                   id="createEventName"
                   type="text"
@@ -412,7 +412,7 @@ function CreateWorkflowDialog({open, onOpenChange, onSuccess}: CreateWorkflowDia
                   required
                   autoComplete="off"
                 />
-              </PopoverTrigger>
+              </PopoverAnchor>
               {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
                 <PopoverContent
                   className="p-0"

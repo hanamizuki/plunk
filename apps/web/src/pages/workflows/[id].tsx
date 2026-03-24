@@ -33,7 +33,7 @@ import {
   CommandList,
   Popover,
   PopoverContent,
-  PopoverTrigger,
+  PopoverAnchor,
   Switch,
 } from '@plunk/ui';
 import type {Template, Workflow, WorkflowExecution, WorkflowStep, WorkflowTransition} from '@plunk/db';
@@ -862,7 +862,7 @@ function SettingsDialog({workflow, open, onOpenChange, onSave}: SettingsDialogPr
           <div>
             <Label htmlFor="eventName">Trigger Event *</Label>
             <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
-              <PopoverTrigger asChild>
+              <PopoverAnchor asChild>
                 <Input
                   id="eventName"
                   type="text"
@@ -876,7 +876,7 @@ function SettingsDialog({workflow, open, onOpenChange, onSave}: SettingsDialogPr
                   required
                   autoComplete="off"
                 />
-              </PopoverTrigger>
+              </PopoverAnchor>
               {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
                 <PopoverContent
                   className="p-0"
@@ -1641,7 +1641,7 @@ function AddStepDialog({open, onOpenChange, workflowId, onSuccess}: AddStepDialo
                     Event Name *
                   </Label>
                   <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
-                    <PopoverTrigger asChild>
+                    <PopoverAnchor asChild>
                       <Input
                         id="eventName"
                         type="text"
@@ -1656,7 +1656,7 @@ function AddStepDialog({open, onOpenChange, workflowId, onSuccess}: AddStepDialo
                         className="mt-1.5"
                         autoComplete="off"
                       />
-                    </PopoverTrigger>
+                    </PopoverAnchor>
                     {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
                       <PopoverContent
                         className="p-0"
@@ -2841,7 +2841,7 @@ function EditStepDialog({step, workflowId, open, onOpenChange, onSuccess}: EditS
                 <div>
                   <Label htmlFor="editEventName">Event Name *</Label>
                   <Popover open={eventPopoverOpen} onOpenChange={setEventPopoverOpen}>
-                    <PopoverTrigger asChild>
+                    <PopoverAnchor asChild>
                       <Input
                         id="editEventName"
                         type="text"
@@ -2856,7 +2856,7 @@ function EditStepDialog({step, workflowId, open, onOpenChange, onSuccess}: EditS
                         className="mt-1.5"
                         autoComplete="off"
                       />
-                    </PopoverTrigger>
+                    </PopoverAnchor>
                     {eventNamesData?.eventNames && eventNamesData.eventNames.length > 0 && (
                       <PopoverContent
                         className="p-0"
