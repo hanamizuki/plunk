@@ -29,7 +29,7 @@
       "unsubscribedSuccess": "已取消订阅！",
       "unsubscribeCompletely": "取消订阅",
       "subscribeToEmails": "订阅邮件",
-      "disclaimer": "你可以在此管理邮件偏好设置，订阅状态会即时更新。"
+      "disclaimer": "你可以在此管理邮件偏好设置，订阅状态会实时更新。"
     },
     "common": {
       "loading": "加载中...",
