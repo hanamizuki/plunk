@@ -6,9 +6,21 @@ import {
   CardHeader,
   CardTitle,
   ConfirmDialog,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   IconSpinner,
   Input,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectItemWithDescription,
+  SelectTrigger,
+  SelectValue,
   StickySaveBar,
 } from '@plunk/ui';
 import type {Template} from '@plunk/db';
@@ -17,7 +29,7 @@ import {EmailSettings} from '../../components/EmailSettings';
 import {EmailEditor} from '../../components/EmailEditor';
 import {network} from '../../lib/network';
 import {useChangeTracking} from '../../lib/hooks/useChangeTracking';
-import {ArrowLeft, Save, Trash2, TriangleAlert} from 'lucide-react';
+import {ArrowLeft, Save, Send, Trash2, TriangleAlert} from 'lucide-react';
 import Link from 'next/link';
 import {NextSeo} from 'next-seo';
 import {useRouter} from 'next/router';
@@ -39,6 +51,15 @@ export default function TemplateEditorPage() {
   const [editedTemplate, setEditedTemplate] = useState<Partial<Template>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isTestEmailDialogOpen, setIsTestEmailDialogOpen] = useState(false);
+  const [testEmailAddress, setTestEmailAddress] = useState('');
+  const [sendingTestEmail, setSendingTestEmail] = useState(false);
+
+  // Fetch project members for test email recipient selection
+  const {data: projectMembers} = useSWR<{data: Array<{userId: string; email: string; role: string}>}>(
+    template?.projectId ? `/projects/${template.projectId}/members` : null,
+    {revalidateOnFocus: false},
+  );
 
   // Initialize edit fields when template loads
   useEffect(() => {
@@ -98,6 +119,30 @@ export default function TemplateEditorPage() {
     }
   };
 
+  const handleSendTestEmail = async () => {
+    if (!testEmailAddress) return;
+    setSendingTestEmail(true);
+    try {
+      // 直接帶 editor 目前的內容，不需要先存檔
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await network.fetch('POST', `/templates/${id}/test`, {
+        email: testEmailAddress,
+        subject: editedTemplate.subject,
+        body: editedTemplate.body,
+        from: editedTemplate.from,
+        fromName: editedTemplate.fromName || null,
+        replyTo: editedTemplate.replyTo || null,
+      } as any);
+      toast.success(`Test email sent to ${testEmailAddress}`);
+      setIsTestEmailDialogOpen(false);
+      setTestEmailAddress('');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to send test email');
+    } finally {
+      setSendingTestEmail(false);
+    }
+  };
+
   const handleDelete = async () => {
     try {
       await network.fetch('DELETE', `/templates/${id}`);
@@ -137,6 +182,14 @@ export default function TemplateEditorPage() {
                   : 'All changes saved'}
             </p>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setIsTestEmailDialogOpen(true)}
+          >
+            <Send className="h-4 w-4" />
+            <span className="hidden sm:inline">Send Test</span>
+          </Button>
         </div>
 
         <form onSubmit={handleSave} className="space-y-6">
@@ -291,6 +344,57 @@ export default function TemplateEditorPage() {
 
       {/* Sticky Save Bar */}
       <StickySaveBar status={isSubmitting ? 'saving' : hasChanges ? 'dirty' : 'idle'} onSave={handleSave} />
+
+      {/* Send Test Email Dialog */}
+      <Dialog open={isTestEmailDialogOpen} onOpenChange={setIsTestEmailDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Send Test Email</DialogTitle>
+            <DialogDescription>
+              Send a test version of this template to a project member to verify how it looks. The test email will be
+              prefixed with [TEST] in the subject line.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="testEmail">Project Member</Label>
+              <Select value={testEmailAddress} onValueChange={setTestEmailAddress}>
+                <SelectTrigger id="testEmail" className="mt-2">
+                  <SelectValue placeholder="Select a project member..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {projectMembers?.data.map(member => (
+                    <SelectItem key={member.userId} value={member.email}>
+                      {member.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-neutral-500 mt-2">
+                For security reasons, test emails can only be sent to project members.
+              </p>
+              <p className="text-xs text-neutral-500 mt-1">
+                Note: Variables will not be replaced in test emails. The email will be sent exactly as designed.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsTestEmailDialogOpen(false);
+                setTestEmailAddress('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleSendTestEmail} disabled={sendingTestEmail || !testEmailAddress}>
+              {sendingTestEmail ? 'Sending...' : 'Send Test Email'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Template Confirmation */}
       <ConfirmDialog

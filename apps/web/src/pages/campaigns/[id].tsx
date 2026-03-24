@@ -196,8 +196,14 @@ export default function CampaignDetailsPage() {
     setDialog({type: 'testEmail', sending: true});
 
     try {
+      // 直接帶 editor 目前的內容，不需要先存檔
       await network.fetch<{success: boolean; message: string}>('POST', `/campaigns/${id}/test`, {
         email: testEmailAddress,
+        subject: editedCampaign.subject,
+        body: editedCampaign.body,
+        from: editedCampaign.from,
+        fromName: editedCampaign.fromName || null,
+        replyTo: editedCampaign.replyTo || null,
       } as any);
 
       toast.success(`Test email sent to ${testEmailAddress}`);

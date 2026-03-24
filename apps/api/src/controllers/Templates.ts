@@ -167,6 +167,35 @@ export class Templates {
   }
 
   /**
+   * POST /templates/:id/test
+   * Send a test email for a template
+   */
+  @Post(':id/test')
+  @Middleware([requireAuth, requireEmailVerified])
+  @CatchAsync
+  public async sendTest(req: Request, res: Response, _next: NextFunction) {
+    const auth = res.locals.auth;
+    const {id} = req.params;
+    const {email, subject, body, from, fromName, replyTo} = req.body;
+
+    if (!id) {
+      return res.status(400).json({error: 'Template ID is required'});
+    }
+
+    if (!email) {
+      return res.status(400).json({error: 'Email address is required'});
+    }
+
+    // 支援傳入 draft 內容，讓測試信使用 editor 目前的版本而非 DB 的
+    await TemplateService.sendTest(auth.projectId!, id, email, {subject, body, from, fromName, replyTo});
+
+    return res.json({
+      success: true,
+      message: `Test email sent to ${email}`,
+    });
+  }
+
+  /**
    * GET /templates/:id/usage
    * Get template usage statistics
    */
