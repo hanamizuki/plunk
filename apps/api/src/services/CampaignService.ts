@@ -590,7 +590,12 @@ export class CampaignService {
   /**
    * Send a test email for a campaign
    */
-  public static async sendTest(projectId: string, campaignId: string, testEmail: string): Promise<void> {
+  public static async sendTest(
+    projectId: string,
+    campaignId: string,
+    testEmail: string,
+    draft?: {subject?: string; body?: string; from?: string; fromName?: string | null; replyTo?: string | null},
+  ): Promise<void> {
     const campaign = await this.get(projectId, campaignId);
 
     // Validate that the test email belongs to a project member
@@ -610,8 +615,15 @@ export class CampaignService {
       throw new HttpException(403, 'Test emails can only be sent to project members');
     }
 
+    // 有 draft 內容時用 draft，否則 fallback 到 DB 版本
+    const subject = draft?.subject || campaign.subject;
+    const body = draft?.body || campaign.body;
+    const fromEmail = draft?.from || campaign.from;
+    const fromName = draft?.fromName !== undefined ? draft.fromName : campaign.fromName;
+    const replyTo = draft?.replyTo !== undefined ? draft.replyTo : campaign.replyTo;
+
     // Verify domain is registered and verified before sending
-    await DomainService.verifyEmailDomain(campaign.from, projectId);
+    await DomainService.verifyEmailDomain(fromEmail, projectId);
 
     // Get project to validate from address
     const project = await prisma.project.findUnique({
@@ -625,15 +637,15 @@ export class CampaignService {
     // Prepare the email content (no variable replacement for test emails)
     await sendRawEmail({
       from: {
-        name: campaign.fromName || project.name || 'Plunk',
-        email: campaign.from,
+        name: fromName || project.name || 'Plunk',
+        email: fromEmail,
       },
       to: [testEmail],
       content: {
-        subject: `[TEST] ${campaign.subject}`,
-        html: campaign.body,
+        subject: `[TEST] ${subject}`,
+        html: body,
       },
-      reply: campaign.replyTo || undefined,
+      reply: replyTo || undefined,
       headers: {
         'X-Plunk-Test': 'true',
       },
