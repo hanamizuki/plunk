@@ -128,6 +128,10 @@ export default function TemplateEditorPage() {
     if (!testEmailAddress) return;
     setSendingTestEmail(true);
     try {
+      // 有未儲存的變更時，先自動存檔確保測試信內容是最新的
+      if (hasChanges) {
+        await handleSave();
+      }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await network.fetch('POST', `/templates/${id}/test`, {email: testEmailAddress} as any);
       toast.success(`Test email sent to ${testEmailAddress}`);
