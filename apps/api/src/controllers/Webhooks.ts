@@ -16,23 +16,6 @@ import {NtfyService} from '../services/NtfyService.js';
 import {SecurityService} from '../services/SecurityService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
 
-// Known bot/proxy userAgent patterns that produce fake Open/Click events.
-// Gmail, Yahoo, and Outlook preload tracking pixels and links within seconds
-// of delivery, inflating open/click counts with non-human activity.
-const BOT_UA_PATTERNS: RegExp[] = [/GoogleImageProxy/i, /YahooMailProxy/i];
-
-/**
- * Returns true if the userAgent belongs to a known email-client bot/proxy.
- * Empty or undefined userAgent is NOT treated as bot (only logged as warning by caller).
- */
-function isBotUserAgent(ua: string): boolean {
-  if (!ua) return false;
-  if (BOT_UA_PATTERNS.some(p => p.test(ua))) return true;
-  // Outlook preloading: both markers must be present
-  if (/Outlook-iOS-Android/i.test(ua) && /Microsoft Office/i.test(ua)) return true;
-  return false;
-}
-
 /**
  * Webhooks Controller
  * Handles incoming webhooks from external services (AWS SNS/SES)
@@ -304,18 +287,7 @@ export class Webhooks {
           };
           break;
 
-        case 'Open': {
-          const openUA: string = body.open?.userAgent || '';
-
-          // Filter bot/proxy fake opens (Gmail, Yahoo, Outlook image preloading)
-          if (isBotUserAgent(openUA)) {
-            signale.info(`[WEBHOOK] Bot open filtered: ${openUA} for ${email.contact.email}`);
-            return res.status(200).json({success: true, filtered: 'bot'});
-          }
-          if (!openUA) {
-            signale.warn(`[WEBHOOK] Open with empty userAgent for ${email.contact.email}`);
-          }
-
+        case 'Open':
           signale.success(`[WEBHOOK] Open received for ${email.contact.email} from ${email.project.name}`);
           // Only set openedAt on first open
           if (!email.openedAt) {
@@ -328,23 +300,10 @@ export class Webhooks {
             openedAt: email.openedAt?.toISOString() || now.toISOString(),
             opens: (email.opens || 0) + 1,
             isFirstOpen: !email.openedAt,
-            userAgent: openUA || null,
           };
           break;
-        }
 
         case 'Click': {
-          const clickUA: string = body.click?.userAgent || '';
-
-          // Filter bot/proxy fake clicks (same logic as Open)
-          if (isBotUserAgent(clickUA)) {
-            signale.info(`[WEBHOOK] Bot click filtered: ${clickUA} for ${email.contact.email}`);
-            return res.status(200).json({success: true, filtered: 'bot'});
-          }
-          if (!clickUA) {
-            signale.warn(`[WEBHOOK] Click with empty userAgent for ${email.contact.email}`);
-          }
-
           signale.success(`[WEBHOOK] Click received for ${email.contact.email} from ${email.project.name}`);
           const clickedLink = body.click?.link;
           // Only set clickedAt on first click
@@ -359,7 +318,6 @@ export class Webhooks {
             clickedAt: email.clickedAt?.toISOString() || now.toISOString(),
             clicks: (email.clicks || 0) + 1,
             isFirstClick: !email.clickedAt,
-            userAgent: clickUA || null,
           };
           break;
         }
