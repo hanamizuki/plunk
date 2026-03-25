@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.8.0](https://github.com/hanamizuki/plunk/compare/v0.7.1...v0.8.0) (2026-03-25)
+
+
+### Features
+
+* Add multi-branch workflow conditions (switch/case) ([92949b7](https://github.com/hanamizuki/plunk/commit/92949b7596740b73d04c30e0e2bcc6305bbdf4a7))
+* **i18n:** add Chinese translations (zh-TW, zh-HK, zh-CN) ([33df563](https://github.com/hanamizuki/plunk/commit/33df5632a3d4068e641687c8d404a6eef4aa4d0e))
+* **i18n:** add Italian translation ([7b6872c](https://github.com/hanamizuki/plunk/commit/7b6872c4b79b0fde4491f02851a2049c846c83d6))
+
+
+### Bug Fixes
+
+* add alt text to email badge image ([3b39d84](https://github.com/hanamizuki/plunk/commit/3b39d847cd278317723b4b226434c26c49becebe))
+* broken links to next-wiki.useplunk.com ([e3ea5fb](https://github.com/hanamizuki/plunk/commit/e3ea5fb6dcea95b5028f140b77e54d5938497223))
+* Connect branches smoothly to original node ([2c3e897](https://github.com/hanamizuki/plunk/commit/2c3e8970cbc4ad2eb39fd505a4292345c6cae1c0))
+* Enhance email step configuration validation and recipient handling ([a99cde8](https://github.com/hanamizuki/plunk/commit/a99cde88392450bf719112cb94cc1b9e7c7c1478))
+* normalize field references and handle undefined values in JSON ([b9d692c](https://github.com/hanamizuki/plunk/commit/b9d692cf5b491ab22a40ec69e77ff7bdc62eec63))
+* Prevent switching if nodes are attached to multi-branch ([c32b54f](https://github.com/hanamizuki/plunk/commit/c32b54f588db79a501db456e6075a337dee8ed26))
+* update old references to next.useplunk.com ([44987d2](https://github.com/hanamizuki/plunk/commit/44987d2b5e8028c6f8f26c39e9dec386e1ccf6e1))
+* visual editor preview ([4451e92](https://github.com/hanamizuki/plunk/commit/4451e921caff45dab126006ba103d91816bed696))
+
+
+### Documentation
+
+* Fix broken links on api overview page ([dc2ce02](https://github.com/hanamizuki/plunk/commit/dc2ce02d1a4e4d1641728b720ca856cedba719a7))
+* Improve self-hosting env variable documentation ([f0ef346](https://github.com/hanamizuki/plunk/commit/f0ef34646e7593f07a780141e14d6d2b735c1101))
+
 ## [0.7.1](https://github.com/useplunk/plunk/compare/v0.7.0...v0.7.1) (2026-03-10)
 
 
