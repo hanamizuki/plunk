@@ -531,12 +531,9 @@ export class WorkflowExecutionService {
       throw new Error('No template configured for SEND_EMAIL step');
     }
 
-    // Parse step config to get recipient configuration
-    const stepConfig = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
-    const recipientConfig =
-      stepConfig.recipient && typeof stepConfig.recipient === 'object' && !Array.isArray(stepConfig.recipient)
-        ? (stepConfig.recipient as {type?: string; customEmail?: string})
-        : {type: 'CONTACT'};
+    // Parse and validate step config using schema
+    const stepConfig = WorkflowStepConfigSchemas.sendEmail.parse(config);
+    const recipientConfig = stepConfig.recipient || {type: 'CONTACT' as const};
 
     // Get contact data for variable substitution
     const contact = execution.contact;
@@ -566,19 +563,13 @@ export class WorkflowExecutionService {
     const renderedBody = this.renderTemplate(step.template.body, variables);
 
     // Determine recipient email
-    let recipientEmail = contact.email;
-    let recipientContactId = contact.id;
-
-    if (recipientConfig.type === 'CUSTOM' && recipientConfig.customEmail) {
-      recipientEmail = recipientConfig.customEmail;
-      // For custom recipients, we don't associate with a contact
-      recipientContactId = contact.id; // Keep original contact for tracking
-    }
+    // Schema validation ensures customEmail exists when type is CUSTOM
+    const recipientEmail = recipientConfig.type === 'CUSTOM' ? recipientConfig.customEmail! : contact.email;
 
     // Send email via EmailService
     const email = await EmailService.sendWorkflowEmail({
       projectId: execution.workflow.projectId,
-      contactId: recipientContactId,
+      contactId: contact.id, // Keep original contact for tracking
       workflowExecutionId: execution.id,
       workflowStepExecutionId: stepExecution.id, // Use stepExecution.id, not step.id
       templateId: step.template.id,
@@ -588,7 +579,7 @@ export class WorkflowExecutionService {
       fromName: step.template.fromName || undefined,
       replyTo: step.template.replyTo || undefined,
       // Pass custom recipient email if specified
-      recipientEmail: recipientConfig.type === 'CUSTOM' ? recipientEmail : undefined,
+      recipientEmail: recipientConfig.type === 'CUSTOM' ? recipientConfig.customEmail : undefined,
     });
 
     return {

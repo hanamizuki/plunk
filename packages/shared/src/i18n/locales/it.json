@@ -1,0 +1,45 @@
+{
+  "pages": {
+    "unsubscribe": {
+      "title": "Annulla l'iscrizione",
+      "description": "Ci dispiace vederti andare via. Sei sicuro di voler annullare l'iscrizione per {email} dalla ricezione di e-mail?",
+      "button": "Annulla iscrizione",
+      "buttonLoading": "Annullamento in corso...",
+      "managePreferences": "Gestisci invece le preferenze",
+      "successTitle": "Iscrizione annullata",
+      "successDescription": "L'iscrizione per {email} è stata annullata. Non riceverai più nostre e-mail.",
+      "changedMind": "Hai cambiato idea?",
+      "subscribeAgain": "Iscriviti di nuovo"
+    },
+    "subscribe": {
+      "title": "Iscriviti agli aggiornamenti",
+      "description": "Vuoi iscrivere {email} per ricevere e-mail?",
+      "button": "Iscriviti",
+      "buttonLoading": "Iscrizione in corso...",
+      "successTitle": "Ti sei iscritto!",
+      "successDescription": "{email} è ora iscritto per ricevere nostre e-mail."
+    },
+    "manage": {
+      "title": "Gestisci le preferenze",
+      "description": "Gestisci le preferenze e-mail per {email}",
+      "subscriptionLabel": "Iscrizione e-mail",
+      "subscribedStatus": "Al momento sei iscritto per ricevere e-mail",
+      "unsubscribedStatus": "Al momento l'iscrizione alle e-mail è annullata",
+      "subscribedSuccess": "Iscrizione avvenuta con successo!",
+      "unsubscribedSuccess": "Iscrizione annullata con successo!",
+      "unsubscribeCompletely": "Annulla completamente l'iscrizione",
+      "subscribeToEmails": "Iscriviti alle e-mail",
+      "disclaimer": "Questa pagina ti consente di gestire le tue preferenze e-mail. Lo stato della tua iscrizione viene aggiornato in tempo reale."
+    },
+    "common": {
+      "loading": "Caricamento in corso...",
+      "error": "Errore"
+    }
+  },
+  "email": {
+    "footer": {
+      "unsubscribeText": "Hai ricevuto questa e-mail perché hai accettato di ricevere e-mail da {projectName}. Se non desideri più ricevere e-mail di questo tipo, ti preghiamo di",
+      "updatePreferences": "aggiornare le tue preferenze"
+    }
+  }
+}

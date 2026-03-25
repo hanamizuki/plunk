@@ -16,6 +16,10 @@ export const SUPPORTED_LANGUAGES: Language[] = [
   {code: 'cs', name: 'Czech', nativeName: 'Čeština', flag: '🇨🇿'},
   {code: 'pl', name: 'Polish', nativeName: 'Polski', flag: '🇵🇱'},
   {code: 'es', name: 'Spanish (Spain)', nativeName: 'Español (España)', flag: '🇪🇸'},
+  {code: 'it', name: 'Italian', nativeName: 'Italiano', flag: '🇮🇹'},
+  {code: 'zh-TW', name: 'Chinese (Traditional, Taiwan)', nativeName: '繁體中文', flag: '🇹🇼'},
+  {code: 'zh-HK', name: 'Chinese (Traditional, Hong Kong)', nativeName: '繁體中文（香港）', flag: '🇭🇰'},
+  {code: 'zh-CN', name: 'Chinese (Simplified, China)', nativeName: '简体中文', flag: '🇨🇳'},
 ];
 
 export const DEFAULT_LANGUAGE = 'en';
