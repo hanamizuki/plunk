@@ -7,6 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Plunk is a Turborepo monorepo containing multiple applications and shared packages for a platform service. The project
 uses Yarn workspaces with Node.js 20+ requirement.
 
+### Git Branching & Upstream
+
+- **主分支是 `next`**（不是 `main`）。所有開發、PR、發佈都以 `next` 為基準。
+- 這是 `useplunk/plunk` 的 fork。upstream 有 `main`（V1 舊架構，`packages/api/`）和 `next`（V2 現行架構，`apps/api/`），兩者結構完全不同。
+- **對 upstream 發 PR 時，目標分支是 `next`**，不是 `main`。
+
 ## Scale & Performance Requirements
 
 **CRITICAL**: This service operates at high scale with a large amount of contacts being added every day. All code
