@@ -15,6 +15,29 @@ import {MeterService} from '../services/MeterService.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {SecurityService} from '../services/SecurityService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
+import {isBotUserAgent, maskEmail, normalizeUserAgent, sanitizeForLog} from '../utils/botDetection.js';
+
+/**
+ * Checks userAgent for bot/proxy and returns early response if filtered.
+ * Returns true if the event was filtered (caller should return), false otherwise.
+ */
+function filterBotEvent(
+  ua: string,
+  eventType: string,
+  contactEmail: string,
+  res: Response,
+): boolean {
+  if (isBotUserAgent(ua)) {
+    // Mask PII and sanitize UA to prevent log injection
+    signale.info(`[WEBHOOK] Bot ${eventType.toLowerCase()} filtered: ${sanitizeForLog(ua)} for ${maskEmail(contactEmail)}`);
+    res.status(200).json({success: true, filtered: 'bot'});
+    return true;
+  }
+  if (!ua) {
+    signale.warn(`[WEBHOOK] ${eventType} with empty userAgent for ${maskEmail(contactEmail)}`);
+  }
+  return false;
+}
 
 /**
  * Webhooks Controller
@@ -287,7 +310,10 @@ export class Webhooks {
           };
           break;
 
-        case 'Open':
+        case 'Open': {
+          const openUA = normalizeUserAgent(body.open?.userAgent);
+          if (filterBotEvent(openUA, 'Open', email.contact.email, res)) return;
+
           signale.success(`[WEBHOOK] Open received for ${email.contact.email} from ${email.project.name}`);
           // Only set openedAt on first open
           if (!email.openedAt) {
@@ -300,10 +326,15 @@ export class Webhooks {
             openedAt: email.openedAt?.toISOString() || now.toISOString(),
             opens: (email.opens || 0) + 1,
             isFirstOpen: !email.openedAt,
+            userAgent: openUA || null,
           };
           break;
+        }
 
         case 'Click': {
+          const clickUA = normalizeUserAgent(body.click?.userAgent);
+          if (filterBotEvent(clickUA, 'Click', email.contact.email, res)) return;
+
           signale.success(`[WEBHOOK] Click received for ${email.contact.email} from ${email.project.name}`);
           const clickedLink = body.click?.link;
           // Only set clickedAt on first click
@@ -318,6 +349,7 @@ export class Webhooks {
             clickedAt: email.clickedAt?.toISOString() || now.toISOString(),
             clicks: (email.clicks || 0) + 1,
             isFirstClick: !email.clickedAt,
+            userAgent: clickUA || null,
           };
           break;
         }
