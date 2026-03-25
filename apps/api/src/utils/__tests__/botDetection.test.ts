@@ -21,6 +21,11 @@ describe('isBotUserAgent', () => {
     expect(isBotUserAgent('YahooMailProxy/1.0')).toBe(true);
   });
 
+  // Barracuda Sentinel (enterprise email security scanner)
+  it('detects Barracuda Sentinel', () => {
+    expect(isBotUserAgent('Barracuda Sentinel (EE)')).toBe(true);
+  });
+
   // Outlook preloading — requires BOTH markers
   it('detects Outlook preloading with both markers', () => {
     expect(isBotUserAgent('Mozilla/5.0 Outlook-iOS-Android/1.0 Microsoft Office/16.0')).toBe(true);
