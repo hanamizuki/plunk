@@ -15,7 +15,7 @@ import {MeterService} from '../services/MeterService.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {SecurityService} from '../services/SecurityService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
-import {isBotUserAgent} from '../utils/botDetection.js';
+import {isBotUserAgent, maskEmail, normalizeUserAgent, sanitizeForLog} from '../utils/botDetection.js';
 
 /**
  * Checks userAgent for bot/proxy and returns early response if filtered.
@@ -28,12 +28,13 @@ function filterBotEvent(
   res: Response,
 ): boolean {
   if (isBotUserAgent(ua)) {
-    signale.info(`[WEBHOOK] Bot ${eventType.toLowerCase()} filtered: ${ua} for ${contactEmail}`);
+    // Mask PII and sanitize UA to prevent log injection
+    signale.info(`[WEBHOOK] Bot ${eventType.toLowerCase()} filtered: ${sanitizeForLog(ua)} for ${maskEmail(contactEmail)}`);
     res.status(200).json({success: true, filtered: 'bot'});
     return true;
   }
   if (!ua) {
-    signale.warn(`[WEBHOOK] ${eventType} with empty userAgent for ${contactEmail}`);
+    signale.warn(`[WEBHOOK] ${eventType} with empty userAgent for ${maskEmail(contactEmail)}`);
   }
   return false;
 }
@@ -310,7 +311,7 @@ export class Webhooks {
           break;
 
         case 'Open': {
-          const openUA: string = body.open?.userAgent || '';
+          const openUA = normalizeUserAgent(body.open?.userAgent);
           if (filterBotEvent(openUA, 'Open', email.contact.email, res)) return;
 
           signale.success(`[WEBHOOK] Open received for ${email.contact.email} from ${email.project.name}`);
@@ -331,7 +332,7 @@ export class Webhooks {
         }
 
         case 'Click': {
-          const clickUA: string = body.click?.userAgent || '';
+          const clickUA = normalizeUserAgent(body.click?.userAgent);
           if (filterBotEvent(clickUA, 'Click', email.contact.email, res)) return;
 
           signale.success(`[WEBHOOK] Click received for ${email.contact.email} from ${email.project.name}`);

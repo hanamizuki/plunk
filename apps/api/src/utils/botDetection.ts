@@ -25,3 +25,32 @@ export function isBotUserAgent(ua: string): boolean {
   if (OUTLOOK_IOS_ANDROID.test(ua) && MICROSOFT_OFFICE.test(ua)) return true;
   return false;
 }
+
+/**
+ * Coerce unknown userAgent value to string.
+ * SES webhook payloads are untyped JSON — guard against non-string values.
+ */
+export function normalizeUserAgent(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Mask email for logging to avoid PII exposure.
+ * "alice@example.com" → "a***@e***.com"
+ */
+export function maskEmail(email: string): string {
+  const at = email.indexOf('@');
+  if (at < 1) return '***';
+  const [local, domain] = [email.slice(0, at), email.slice(at + 1)];
+  const dot = domain.lastIndexOf('.');
+  const tld = dot > 0 ? domain.slice(dot) : '';
+  return `${local[0]}***@${domain[0]}***${tld}`;
+}
+
+/**
+ * Strip control characters (newlines, tabs, etc.) to prevent log injection.
+ */
+export function sanitizeForLog(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\x00-\x1f\x7f]/g, '');
+}
