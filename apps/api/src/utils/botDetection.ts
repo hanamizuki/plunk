@@ -1,10 +1,13 @@
 // Known bot/proxy userAgent patterns that produce fake Open/Click events.
-// Gmail, Yahoo, Barracuda, and Outlook preload tracking pixels and links
+// Yahoo, Barracuda, and Outlook preload tracking pixels and links
 // within seconds of delivery, inflating open/click counts with non-human activity.
 // NOTE: Apple MPP and Microsoft SafeLinks cannot be detected by UA alone —
 // they require IP-range or timing-based heuristics (out of scope here).
+//
+// GoogleImageProxy is intentionally NOT included here. Gmail routes ALL tracking
+// pixel requests through its image proxy — including legitimate user opens.
+// Filtering it would discard every Gmail open event and severely undercount engagement.
 const BOT_UA_PATTERNS: RegExp[] = [
-  /GoogleImageProxy/i,
   /YahooMailProxy/i,
   /Barracuda Sentinel/i,
 ];

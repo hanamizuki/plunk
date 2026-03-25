@@ -3,17 +3,14 @@ import {describe, expect, it} from 'vitest';
 import {isBotUserAgent, maskEmail, normalizeUserAgent, sanitizeForLog} from '../botDetection';
 
 describe('isBotUserAgent', () => {
-  // Gmail image proxy
-  it('detects GoogleImageProxy', () => {
-    expect(isBotUserAgent('GoogleImageProxy')).toBe(true);
+  // GoogleImageProxy is NOT a bot — Gmail routes all tracking pixels through it,
+  // including legitimate user opens. Filtering it would drop all Gmail engagement.
+  it('allows GoogleImageProxy (Gmail image proxy is not a bot)', () => {
+    expect(isBotUserAgent('GoogleImageProxy')).toBe(false);
   });
 
-  it('detects GoogleImageProxy in full UA string', () => {
-    expect(isBotUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) GoogleImageProxy')).toBe(true);
-  });
-
-  it('detects GoogleImageProxy case-insensitively', () => {
-    expect(isBotUserAgent('googleimageproxy')).toBe(true);
+  it('allows GoogleImageProxy in full UA string', () => {
+    expect(isBotUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) GoogleImageProxy')).toBe(false);
   });
 
   // Yahoo mail proxy
