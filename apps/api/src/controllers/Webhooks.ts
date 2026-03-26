@@ -5,6 +5,8 @@ import type {Request, Response} from 'express';
 import signale from 'signale';
 import type Stripe from 'stripe';
 
+import {toPrismaJson} from '@plunk/types';
+
 import {STRIPE_ENABLED, STRIPE_WEBHOOK_SECRET} from '../app/constants.js';
 import {stripe} from '../app/stripe.js';
 import {prisma} from '../database/prisma.js';
@@ -15,7 +17,7 @@ import {MeterService} from '../services/MeterService.js';
 import {NtfyService} from '../services/NtfyService.js';
 import {SecurityService} from '../services/SecurityService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
-import {isBotUserAgent, maskEmail, normalizeUserAgent, sanitizeForLog} from '../utils/botDetection.js';
+import {isBotUserAgent, isMachineOpen, maskEmail, normalizeUserAgent, sanitizeForLog} from '../utils/botDetection.js';
 
 /**
  * Checks userAgent for bot/proxy and returns early response if filtered.
@@ -313,6 +315,28 @@ export class Webhooks {
         case 'Open': {
           const openUA = normalizeUserAgent(body.open?.userAgent);
           if (filterBotEvent(openUA, 'Open', email.contact.email, res)) return;
+
+          // Machine opens (e.g. Apple MPP): record event for transparency,
+          // but don't update Email stats or trigger workflows
+          if (isMachineOpen(openUA)) {
+            signale.info(
+              `[WEBHOOK] Machine open filtered: ${sanitizeForLog(openUA)} for ${maskEmail(email.contact.email)}`,
+            );
+            await prisma.event.create({
+              data: {
+                projectId: email.projectId,
+                contactId: email.contactId,
+                emailId: email.id,
+                name: 'email.open',
+                data: toPrismaJson({
+                  ...baseEventData,
+                  userAgent: openUA,
+                  isMachineOpen: true,
+                }),
+              },
+            });
+            return res.status(200).json({success: true, filtered: 'machine_open'});
+          }
 
           signale.success(`[WEBHOOK] Open received for ${email.contact.email} from ${email.project.name}`);
           // Only set openedAt on first open
