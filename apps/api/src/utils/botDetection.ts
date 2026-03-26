@@ -1,8 +1,9 @@
 // Known bot/proxy userAgent patterns that produce fake Open/Click events.
 // Yahoo, Barracuda, and Outlook preload tracking pixels and links
 // within seconds of delivery, inflating open/click counts with non-human activity.
-// NOTE: Apple MPP and Microsoft SafeLinks cannot be detected by UA alone —
-// they require IP-range or timing-based heuristics (out of scope here).
+// NOTE: Apple MPP is detected via bare "Mozilla/5.0" UA (see isMachineOpen).
+// Microsoft SafeLinks cannot be detected by UA alone — it requires IP-range
+// or timing-based heuristics (out of scope here).
 //
 // GoogleImageProxy is intentionally NOT included here. Gmail routes ALL tracking
 // pixel requests through its image proxy — including legitimate user opens.
