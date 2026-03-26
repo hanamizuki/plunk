@@ -13,55 +13,27 @@ import {Prisma, PrismaClient} from '@prisma/client';
 const prisma = new PrismaClient();
 const dryRun = !process.argv.includes('--apply');
 
-async function main() {
-  console.log(dryRun ? '=== DRY RUN ===' : '=== APPLYING CHANGES ===');
-
-  // Step 1: Find all machine-open events that haven't been flagged yet.
-  // These are open events with the bare "Mozilla/5.0" user-agent string,
-  // which is characteristic of Apple Mail Privacy Protection (MPP) proxy fetches.
-  const machineOpenEvents = await prisma.$queryRaw<Array<{id: string; emailId: string | null}>>`
-    SELECT id, "emailId"
-    FROM events
-    WHERE name = 'email.open'
-      AND data->>'userAgent' = 'Mozilla/5.0'
-      AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
-  `;
-
-  console.log(`Found ${machineOpenEvents.length} machine-open events to flag`);
-
-  if (machineOpenEvents.length === 0) {
-    console.log('Nothing to do');
-    return;
-  }
-
-  // Step 2: Flag events with isMachineOpen = true using jsonb concatenation.
-  // This merges the flag into the existing data JSON without overwriting other fields.
-  if (!dryRun) {
-    const flagged = await prisma.$executeRaw`
-      UPDATE events
-      SET data = data || '{"isMachineOpen": true}'::jsonb
-      WHERE name = 'email.open'
-        AND data->>'userAgent' = 'Mozilla/5.0'
-        AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
-    `;
-    console.log(`Flagged ${flagged} events with isMachineOpen: true`);
-  }
-
-  // Step 3: 批次重新計算 Email.opens 和 Email.openedAt。
-  // 用 GROUP BY 一次算出所有受影響 email 的真實 opens 數量與最早開啟時間，
-  // 避免對每個 emailId 逐一查詢造成 N+1 問題。
-  const affectedEmailIds = [...new Set(
-    machineOpenEvents.filter(e => e.emailId).map(e => e.emailId as string),
-  )];
-  console.log(`Affected emails: ${affectedEmailIds.length}`);
-
-  if (affectedEmailIds.length === 0) {
+/**
+ * 重新計算指定 email 的 opens / openedAt / status。
+ * 從 flag + recompute 兩個路徑共用，確保邏輯一致。
+ *
+ * 計算真實 opens 時排除：
+ *   1. 已標記 isMachineOpen = true 的 events
+ *   2. bare "Mozilla/5.0" UA（尚未標記但屬於 machine open 的 events）
+ * 對 userAgent 為 NULL 的 events 視為合法開啟，不排除。
+ */
+async function recomputeEmailStats(emailIds: string[]) {
+  if (emailIds.length === 0) {
     console.log(dryRun ? '=== DRY RUN COMPLETE (no changes made) ===' : '=== DONE ===');
     return;
   }
 
+  console.log(`Recomputing stats for ${emailIds.length} emails`);
+
   // 單一 GROUP BY 查詢：一次取得每個 emailId 的真實開啟次數和最早開啟時間。
   // 排除機器開啟（已標記的 isMachineOpen 和 bare Mozilla/5.0 UA）。
+  // 注意：userAgent 為 NULL 的 events 是合法開啟，用 IS NULL OR != 確保不被排除。
+  // Postgres 中 NULL != 'value' 結果是 NULL（非 true），所以必須明確處理 NULL。
   const emailStats = await prisma.$queryRaw<
     Array<{emailId: string; opens: bigint; openedAt: Date | null}>
   >`
@@ -70,10 +42,10 @@ async function main() {
       COUNT(*) as opens,
       MIN("createdAt") as "openedAt"
     FROM events
-    WHERE "emailId" IN (${Prisma.join(affectedEmailIds)})
+    WHERE "emailId" IN (${Prisma.join(emailIds)})
       AND name = 'email.open'
       AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
-      AND data->>'userAgent' != 'Mozilla/5.0'
+      AND (data->>'userAgent' IS NULL OR data->>'userAgent' != 'Mozilla/5.0')
     GROUP BY "emailId"
   `;
 
@@ -85,20 +57,20 @@ async function main() {
 
   // 批次取得所有受影響 email 的目前狀態，用於判斷是否需要將 status 從 OPENED 降回 DELIVERED。
   const emails = await prisma.email.findMany({
-    where: {id: {in: affectedEmailIds}},
+    where: {id: {in: emailIds}},
     select: {id: true, status: true},
   });
   const statusMap = new Map(emails.map(e => [e.id, e.status]));
 
   // 列出每封 email 的新數值（dry-run 和 apply 模式都會顯示）
-  for (const emailId of affectedEmailIds) {
+  for (const emailId of emailIds) {
     const stats = statsMap.get(emailId) ?? {opens: 0, openedAt: null};
     console.log(`  Email ${emailId}: opens ${stats.opens}, openedAt ${stats.openedAt?.toISOString() ?? 'NULL'}`);
   }
 
   if (!dryRun) {
     // 用 $transaction 批次執行所有 update，確保原子性且大幅減少 DB round-trip。
-    const updates = affectedEmailIds.map(emailId => {
+    const updates = emailIds.map(emailId => {
       const stats = statsMap.get(emailId) ?? {opens: 0, openedAt: null};
       const currentStatus = statusMap.get(emailId);
 
@@ -119,6 +91,75 @@ async function main() {
   }
 
   console.log(dryRun ? '=== DRY RUN COMPLETE (no changes made) ===' : '=== DONE ===');
+}
+
+async function main() {
+  console.log(dryRun ? '=== DRY RUN ===' : '=== APPLYING CHANGES ===');
+
+  // Step 1: Find all machine-open events that haven't been flagged yet.
+  // These are open events with the bare "Mozilla/5.0" user-agent string,
+  // which is characteristic of Apple Mail Privacy Protection (MPP) proxy fetches.
+  const machineOpenEvents = await prisma.$queryRaw<Array<{id: string; emailId: string | null}>>`
+    SELECT id, "emailId"
+    FROM events
+    WHERE name = 'email.open'
+      AND data->>'userAgent' = 'Mozilla/5.0'
+      AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
+  `;
+
+  console.log(`Found ${machineOpenEvents.length} unflagged machine-open events`);
+
+  // 冪等性檢查：即使沒有 unflagged events，也要確認先前已 flagged 的 events
+  // 是否都已完成 email stats recompute。這處理「flag 成功但 recompute 失敗後重跑」的情境。
+  // 比較 email 目前的 opens 數量與實際真實開啟事件數量，不一致代表 recompute 尚未完成。
+  if (machineOpenEvents.length === 0) {
+    const staleEmails = await prisma.$queryRaw<Array<{emailId: string}>>`
+      SELECT DISTINCT e."emailId"
+      FROM events e
+      JOIN emails em ON em.id = e."emailId"
+      WHERE e.name = 'email.open'
+        AND e.data->>'isMachineOpen' = 'true'
+        AND e."emailId" IS NOT NULL
+        AND em.opens > (
+          SELECT COUNT(*)
+          FROM events e2
+          WHERE e2."emailId" = e."emailId"
+            AND e2.name = 'email.open'
+            AND (e2.data->>'isMachineOpen' IS NULL OR e2.data->>'isMachineOpen' != 'true')
+            AND (e2.data->>'userAgent' IS NULL OR e2.data->>'userAgent' != 'Mozilla/5.0')
+        )
+    `;
+
+    if (staleEmails.length === 0) {
+      console.log('Nothing to do — all events flagged and email stats are consistent');
+      return;
+    }
+
+    console.log(`Found ${staleEmails.length} emails with stale stats from a previous incomplete run`);
+    await recomputeEmailStats(staleEmails.map(e => e.emailId));
+    return;
+  }
+
+  // Step 2: Flag events with isMachineOpen = true using jsonb concatenation.
+  // This merges the flag into the existing data JSON without overwriting other fields.
+  if (!dryRun) {
+    const flagged = await prisma.$executeRaw`
+      UPDATE events
+      SET data = data || '{"isMachineOpen": true}'::jsonb
+      WHERE name = 'email.open'
+        AND data->>'userAgent' = 'Mozilla/5.0'
+        AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
+    `;
+    console.log(`Flagged ${flagged} events with isMachineOpen: true`);
+  }
+
+  // Step 3: 批次重新計算受影響 email 的 opens / openedAt。
+  const affectedEmailIds = [...new Set(
+    machineOpenEvents.filter(e => e.emailId).map(e => e.emailId as string),
+  )];
+  console.log(`Affected emails: ${affectedEmailIds.length}`);
+
+  await recomputeEmailStats(affectedEmailIds);
 }
 
 main()
