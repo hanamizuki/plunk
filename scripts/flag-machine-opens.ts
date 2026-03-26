@@ -71,25 +71,34 @@ async function recomputeEmailStats(emailIds: string[]) {
   }
 
   if (!dryRun) {
-    // 用 $transaction 批次執行所有 update，確保原子性且大幅減少 DB round-trip。
-    const updates = emailIds.map(emailId => {
-      const stats = statsMap.get(emailId) ?? {opens: 0, openedAt: null};
-      const currentStatus = statusMap.get(emailId);
+    // 分批執行 update，每批最多 BATCH_SIZE 個，各自包在獨立的 $transaction 中。
+    // 避免將所有 update 塞進單一 transaction 導致大量資料時超時。
+    const BATCH_SIZE = 500;
 
-      return prisma.email.update({
-        where: {id: emailId},
-        data: {
-          opens: stats.opens,
-          openedAt: stats.openedAt,
-          // 只有在目前狀態為 OPENED 且真實開啟次數歸零時，才降回 DELIVERED。
-          // 不動 CLICKED、BOUNCED、COMPLAINED 等較高優先級的狀態。
-          ...(stats.opens === 0 && currentStatus === 'OPENED' ? {status: 'DELIVERED'} : {}),
-        },
+    for (let i = 0; i < emailIds.length; i += BATCH_SIZE) {
+      const batch = emailIds.slice(i, i + BATCH_SIZE);
+
+      const updates = batch.map(emailId => {
+        const stats = statsMap.get(emailId) ?? {opens: 0, openedAt: null};
+        const currentStatus = statusMap.get(emailId);
+
+        return prisma.email.update({
+          where: {id: emailId},
+          data: {
+            opens: stats.opens,
+            openedAt: stats.openedAt,
+            // 只有在目前狀態為 OPENED 且真實開啟次數歸零時，才降回 DELIVERED。
+            // 不動 CLICKED、BOUNCED、COMPLAINED 等較高優先級的狀態。
+            ...(stats.opens === 0 && currentStatus === 'OPENED' ? {status: 'DELIVERED'} : {}),
+          },
+        });
       });
-    });
 
-    await prisma.$transaction(updates);
-    console.log(`Updated ${updates.length} emails in a single transaction`);
+      await prisma.$transaction(updates);
+      console.log(`  Batch ${Math.floor(i / BATCH_SIZE) + 1}: updated ${updates.length} emails`);
+    }
+
+    console.log(`Updated ${emailIds.length} emails in batches of ${BATCH_SIZE}`);
   }
 
   console.log(dryRun ? '=== DRY RUN COMPLETE (no changes made) ===' : '=== DONE ===');
@@ -111,57 +120,58 @@ async function main() {
 
   console.log(`Found ${machineOpenEvents.length} unflagged machine-open events`);
 
-  // 冪等性檢查：即使沒有 unflagged events，也要確認先前已 flagged 的 events
-  // 是否都已完成 email stats recompute。這處理「flag 成功但 recompute 失敗後重跑」的情境。
-  // 比較 email 目前的 opens 數量與實際真實開啟事件數量，不一致代表 recompute 尚未完成。
-  if (machineOpenEvents.length === 0) {
-    const staleEmails = await prisma.$queryRaw<Array<{emailId: string}>>`
-      SELECT DISTINCT e."emailId"
-      FROM events e
-      JOIN emails em ON em.id = e."emailId"
-      WHERE e.name = 'email.open'
-        AND e.data->>'isMachineOpen' = 'true'
-        AND e."emailId" IS NOT NULL
-        AND em.opens > (
-          SELECT COUNT(*)
-          FROM events e2
-          WHERE e2."emailId" = e."emailId"
-            AND e2.name = 'email.open'
-            AND (e2.data->>'isMachineOpen' IS NULL OR e2.data->>'isMachineOpen' != 'true')
-            AND (e2.data->>'userAgent' IS NULL OR btrim(e2.data->>'userAgent') != 'Mozilla/5.0')
-        )
-    `;
-
-    if (staleEmails.length === 0) {
-      console.log('Nothing to do — all events flagged and email stats are consistent');
-      return;
+  // Step 2: Flag unflagged events 並 recompute 受影響 email 的 stats。
+  if (machineOpenEvents.length > 0) {
+    // Flag events with isMachineOpen = true using jsonb concatenation.
+    // This merges the flag into the existing data JSON without overwriting other fields.
+    if (!dryRun) {
+      const flagged = await prisma.$executeRaw`
+        UPDATE events
+        SET data = data || '{"isMachineOpen": true}'::jsonb
+        WHERE name = 'email.open'
+          AND btrim(data->>'userAgent') = 'Mozilla/5.0'
+          AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
+      `;
+      console.log(`Flagged ${flagged} events with isMachineOpen: true`);
     }
 
-    console.log(`Found ${staleEmails.length} emails with stale stats from a previous incomplete run`);
+    // 批次重新計算受影響 email 的 opens / openedAt。
+    const affectedEmailIds = [...new Set(
+      machineOpenEvents.filter(e => e.emailId).map(e => e.emailId as string),
+    )];
+    console.log(`Affected emails: ${affectedEmailIds.length}`);
+
+    await recomputeEmailStats(affectedEmailIds);
+  }
+
+  // Step 3: Stale-stats recovery — 每次都執行，不論有無新的 unflagged events。
+  // 處理「flag 成功但 recompute 失敗後重跑」的情境，以及上方 Step 2 recompute 後
+  // 仍可能遺漏的 email（例如先前 partial failure 殘留的不一致）。
+  // 比較 email 目前的 opens 數量與實際真實開啟事件數量，不一致代表 recompute 尚未完成。
+  const staleEmails = await prisma.$queryRaw<Array<{emailId: string}>>`
+    SELECT DISTINCT e."emailId"
+    FROM events e
+    JOIN emails em ON em.id = e."emailId"
+    WHERE e.name = 'email.open'
+      AND e.data->>'isMachineOpen' = 'true'
+      AND e."emailId" IS NOT NULL
+      AND em.opens > (
+        SELECT COUNT(*)
+        FROM events e2
+        WHERE e2."emailId" = e."emailId"
+          AND e2.name = 'email.open'
+          AND (e2.data->>'isMachineOpen' IS NULL OR e2.data->>'isMachineOpen' != 'true')
+          AND (e2.data->>'userAgent' IS NULL OR btrim(e2.data->>'userAgent') != 'Mozilla/5.0')
+      )
+  `;
+
+  if (staleEmails.length > 0) {
+    console.log(`Found ${staleEmails.length} emails with stale stats — running recovery`);
     await recomputeEmailStats(staleEmails.map(e => e.emailId));
-    return;
+  } else if (machineOpenEvents.length === 0) {
+    // 沒有新 unflagged events 且沒有 stale stats，完全沒事做。
+    console.log('Nothing to do — all events flagged and email stats are consistent');
   }
-
-  // Step 2: Flag events with isMachineOpen = true using jsonb concatenation.
-  // This merges the flag into the existing data JSON without overwriting other fields.
-  if (!dryRun) {
-    const flagged = await prisma.$executeRaw`
-      UPDATE events
-      SET data = data || '{"isMachineOpen": true}'::jsonb
-      WHERE name = 'email.open'
-        AND btrim(data->>'userAgent') = 'Mozilla/5.0'
-        AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
-    `;
-    console.log(`Flagged ${flagged} events with isMachineOpen: true`);
-  }
-
-  // Step 3: 批次重新計算受影響 email 的 opens / openedAt。
-  const affectedEmailIds = [...new Set(
-    machineOpenEvents.filter(e => e.emailId).map(e => e.emailId as string),
-  )];
-  console.log(`Affected emails: ${affectedEmailIds.length}`);
-
-  await recomputeEmailStats(affectedEmailIds);
 }
 
 main()
