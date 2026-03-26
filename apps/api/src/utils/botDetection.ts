@@ -30,6 +30,20 @@ export function isBotUserAgent(ua: string): boolean {
 }
 
 /**
+ * Returns true if the userAgent matches a known machine-open pattern.
+ * Machine opens are automated prefetches by email clients (e.g. Apple MPP).
+ * Unlike bots, machine opens are recorded for transparency but excluded from metrics.
+ *
+ * Apple Mail Privacy Protection (iOS 15+/macOS 12+) prefetches all tracking pixels
+ * on delivery. Its UA is a bare "Mozilla/5.0" with no OS or browser details —
+ * real browsers always include parenthesized platform info after "Mozilla/5.0".
+ */
+export function isMachineOpen(ua: string): boolean {
+  if (!ua) return false;
+  return ua.trim() === 'Mozilla/5.0';
+}
+
+/**
  * Coerce unknown userAgent value to string.
  * SES webhook payloads are untyped JSON — guard against non-string values.
  */

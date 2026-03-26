@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 
-import {isBotUserAgent, maskEmail, normalizeUserAgent, sanitizeForLog} from '../botDetection';
+import {isBotUserAgent, isMachineOpen, maskEmail, normalizeUserAgent, sanitizeForLog} from '../botDetection';
 
 describe('isBotUserAgent', () => {
   // GoogleImageProxy is NOT a bot — Gmail routes all tracking pixels through it,
@@ -48,6 +48,34 @@ describe('isBotUserAgent', () => {
   // Empty string — not treated as bot (caller logs warning)
   it('returns false for empty string', () => {
     expect(isBotUserAgent('')).toBe(false);
+  });
+});
+
+describe('isMachineOpen', () => {
+  // Apple MPP uses bare "Mozilla/5.0" with no OS/browser details
+  it('detects bare Mozilla/5.0 as machine open', () => {
+    expect(isMachineOpen('Mozilla/5.0')).toBe(true);
+  });
+
+  it('detects Mozilla/5.0 with trailing whitespace', () => {
+    expect(isMachineOpen('Mozilla/5.0 ')).toBe(true);
+  });
+
+  // Full browser UA strings contain more than just "Mozilla/5.0"
+  it('allows full browser UA containing Mozilla/5.0', () => {
+    expect(isMachineOpen('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')).toBe(false);
+  });
+
+  it('allows iPhone Safari UA', () => {
+    expect(isMachineOpen('Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15')).toBe(false);
+  });
+
+  it('returns false for empty string', () => {
+    expect(isMachineOpen('')).toBe(false);
+  });
+
+  it('returns false for GoogleImageProxy', () => {
+    expect(isMachineOpen('Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)')).toBe(false);
   });
 });
 
