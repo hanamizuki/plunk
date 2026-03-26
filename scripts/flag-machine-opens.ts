@@ -34,6 +34,8 @@ async function recomputeEmailStats(emailIds: string[]) {
   // 排除機器開啟（已標記的 isMachineOpen 和 bare Mozilla/5.0 UA）。
   // 注意：userAgent 為 NULL 的 events 是合法開啟，用 IS NULL OR != 確保不被排除。
   // Postgres 中 NULL != 'value' 結果是 NULL（非 true），所以必須明確處理 NULL。
+  // 使用 btrim() 去除前後空白，與 isMachineOpen() 的 ua.trim() 行為保持一致，
+  // 避免歷史 events 中帶有 trailing whitespace 的 UA 被漏判。
   const emailStats = await prisma.$queryRaw<
     Array<{emailId: string; opens: bigint; openedAt: Date | null}>
   >`
@@ -45,7 +47,7 @@ async function recomputeEmailStats(emailIds: string[]) {
     WHERE "emailId" IN (${Prisma.join(emailIds)})
       AND name = 'email.open'
       AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
-      AND (data->>'userAgent' IS NULL OR data->>'userAgent' != 'Mozilla/5.0')
+      AND (data->>'userAgent' IS NULL OR btrim(data->>'userAgent') != 'Mozilla/5.0')
     GROUP BY "emailId"
   `;
 
@@ -103,7 +105,7 @@ async function main() {
     SELECT id, "emailId"
     FROM events
     WHERE name = 'email.open'
-      AND data->>'userAgent' = 'Mozilla/5.0'
+      AND btrim(data->>'userAgent') = 'Mozilla/5.0'
       AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
   `;
 
@@ -126,7 +128,7 @@ async function main() {
           WHERE e2."emailId" = e."emailId"
             AND e2.name = 'email.open'
             AND (e2.data->>'isMachineOpen' IS NULL OR e2.data->>'isMachineOpen' != 'true')
-            AND (e2.data->>'userAgent' IS NULL OR e2.data->>'userAgent' != 'Mozilla/5.0')
+            AND (e2.data->>'userAgent' IS NULL OR btrim(e2.data->>'userAgent') != 'Mozilla/5.0')
         )
     `;
 
@@ -147,7 +149,7 @@ async function main() {
       UPDATE events
       SET data = data || '{"isMachineOpen": true}'::jsonb
       WHERE name = 'email.open'
-        AND data->>'userAgent' = 'Mozilla/5.0'
+        AND btrim(data->>'userAgent') = 'Mozilla/5.0'
         AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
     `;
     console.log(`Flagged ${flagged} events with isMachineOpen: true`);
