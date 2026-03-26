@@ -87,3 +87,36 @@ curl -X POST "http://localhost:3000/webhooks/sns" \
 ```
 
 預期：回 200，但 email status 不更新、opens 不 +1。
+
+## Machine Open Filtering
+
+### Bot vs Machine Open 區別
+
+| 類型 | 範例 | 處理方式 |
+|------|------|----------|
+| **Bot opens** | YahooMailProxy, Barracuda Sentinel, Outlook preloading | 完全拒絕，不記錄 Event，不更新 Email |
+| **Machine opens** | Apple Mail Privacy Protection (MPP) | 記錄 Event（加 `isMachineOpen: true`），但不更新 Email stats、不觸發 Workflow |
+
+### Apple MPP 偵測邏輯
+
+Apple Mail Privacy Protection（iOS 15+ / macOS 12+）在 email 送達時自動預載所有 tracking pixel。其 UserAgent 為裸字串 `Mozilla/5.0`，不含 OS 或瀏覽器資訊。真實瀏覽器的 UA 在 `Mozilla/5.0` 後一定會有括號包裹的平台資訊。
+
+偵測方式：`ua.trim() === 'Mozilla/5.0'`（exact match）。
+
+### 資料流
+
+1. SES webhook 收到 Open event
+2. `filterBotEvent()` 檢查 — bot 則直接拒絕
+3. `isMachineOpen()` 檢查 — machine open 則：
+   - 透過 `prisma.event.create()` 記錄 Event（含 `isMachineOpen: true`）
+   - 不呼叫 `EventService.trackEvent()`（避免觸發 workflow）
+   - 不更新 `Email.opens`、`Email.openedAt`、`Email.status`
+   - 回傳 `{success: true, filtered: 'machine_open'}`
+4. 正常 open → 更新 Email stats + 觸發 workflow
+
+### 回溯清理
+
+使用 `scripts/flag-machine-opens.ts`：
+- Dry-run：`npx tsx scripts/flag-machine-opens.ts`
+- 執行：`npx tsx scripts/flag-machine-opens.ts --apply`
+- 冪等設計，可安全重複執行
