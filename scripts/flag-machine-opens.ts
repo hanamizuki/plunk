@@ -8,7 +8,7 @@
  *   npx tsx scripts/flag-machine-opens.ts          # dry-run (read-only)
  *   npx tsx scripts/flag-machine-opens.ts --apply   # execute changes
  */
-import {PrismaClient} from '@prisma/client';
+import {Prisma, PrismaClient} from '@prisma/client';
 
 const prisma = new PrismaClient();
 const dryRun = !process.argv.includes('--apply');
@@ -47,60 +47,75 @@ async function main() {
     console.log(`Flagged ${flagged} events with isMachineOpen: true`);
   }
 
-  // Step 3: Recalculate Email.opens and Email.openedAt for every email
-  // that had at least one machine-open event. This corrects the denormalized
-  // counters by counting only genuine (non-machine) open events.
+  // Step 3: 批次重新計算 Email.opens 和 Email.openedAt。
+  // 用 GROUP BY 一次算出所有受影響 email 的真實 opens 數量與最早開啟時間，
+  // 避免對每個 emailId 逐一查詢造成 N+1 問題。
   const affectedEmailIds = [...new Set(
     machineOpenEvents.filter(e => e.emailId).map(e => e.emailId as string),
   )];
   console.log(`Affected emails: ${affectedEmailIds.length}`);
 
+  if (affectedEmailIds.length === 0) {
+    console.log(dryRun ? '=== DRY RUN COMPLETE (no changes made) ===' : '=== DONE ===');
+    return;
+  }
+
+  // 單一 GROUP BY 查詢：一次取得每個 emailId 的真實開啟次數和最早開啟時間。
+  // 排除機器開啟（已標記的 isMachineOpen 和 bare Mozilla/5.0 UA）。
+  const emailStats = await prisma.$queryRaw<
+    Array<{emailId: string; opens: bigint; openedAt: Date | null}>
+  >`
+    SELECT
+      "emailId",
+      COUNT(*) as opens,
+      MIN("createdAt") as "openedAt"
+    FROM events
+    WHERE "emailId" IN (${Prisma.join(affectedEmailIds)})
+      AND name = 'email.open'
+      AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
+      AND data->>'userAgent' != 'Mozilla/5.0'
+    GROUP BY "emailId"
+  `;
+
+  // 將查詢結果轉為 Map，方便快速查找。
+  // 不在 Map 中的 emailId 代表該 email 已無任何真實開啟事件，opens 歸零。
+  const statsMap = new Map(
+    emailStats.map(s => [s.emailId, {opens: Number(s.opens), openedAt: s.openedAt}]),
+  );
+
+  // 批次取得所有受影響 email 的目前狀態，用於判斷是否需要將 status 從 OPENED 降回 DELIVERED。
+  const emails = await prisma.email.findMany({
+    where: {id: {in: affectedEmailIds}},
+    select: {id: true, status: true},
+  });
+  const statusMap = new Map(emails.map(e => [e.id, e.status]));
+
+  // 列出每封 email 的新數值（dry-run 和 apply 模式都會顯示）
   for (const emailId of affectedEmailIds) {
-    // Count real opens — exclude both already-flagged and about-to-be-flagged events.
-    // The dual condition handles both dry-run (where isMachineOpen hasn't been set yet)
-    // and re-runs (where it has).
-    const [{count: realOpens}] = await prisma.$queryRaw<Array<{count: bigint}>>`
-      SELECT COUNT(*) as count
-      FROM events
-      WHERE "emailId" = ${emailId}
-        AND name = 'email.open'
-        AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
-        AND data->>'userAgent' != 'Mozilla/5.0'
-    `;
+    const stats = statsMap.get(emailId) ?? {opens: 0, openedAt: null};
+    console.log(`  Email ${emailId}: opens ${stats.opens}, openedAt ${stats.openedAt?.toISOString() ?? 'NULL'}`);
+  }
 
-    const opens = Number(realOpens);
+  if (!dryRun) {
+    // 用 $transaction 批次執行所有 update，確保原子性且大幅減少 DB round-trip。
+    const updates = affectedEmailIds.map(emailId => {
+      const stats = statsMap.get(emailId) ?? {opens: 0, openedAt: null};
+      const currentStatus = statusMap.get(emailId);
 
-    // Find the earliest real open timestamp to set as openedAt
-    const firstRealOpen = await prisma.$queryRaw<Array<{createdAt: Date | null}>>`
-      SELECT MIN("createdAt") as "createdAt"
-      FROM events
-      WHERE "emailId" = ${emailId}
-        AND name = 'email.open'
-        AND (data->>'isMachineOpen' IS NULL OR data->>'isMachineOpen' != 'true')
-        AND data->>'userAgent' != 'Mozilla/5.0'
-    `;
-
-    const openedAt = firstRealOpen[0]?.createdAt ?? null;
-
-    console.log(`  Email ${emailId}: opens ${opens}, openedAt ${openedAt?.toISOString() ?? 'NULL'}`);
-
-    if (!dryRun) {
-      // Only revert status to DELIVERED if currently OPENED —
-      // don't downgrade CLICKED, BOUNCED, or COMPLAINED
-      const email = await prisma.email.findUnique({
-        where: {id: emailId},
-        select: {status: true},
-      });
-
-      await prisma.email.update({
+      return prisma.email.update({
         where: {id: emailId},
         data: {
-          opens,
-          openedAt,
-          ...(opens === 0 && email?.status === 'OPENED' ? {status: 'DELIVERED'} : {}),
+          opens: stats.opens,
+          openedAt: stats.openedAt,
+          // 只有在目前狀態為 OPENED 且真實開啟次數歸零時，才降回 DELIVERED。
+          // 不動 CLICKED、BOUNCED、COMPLAINED 等較高優先級的狀態。
+          ...(stats.opens === 0 && currentStatus === 'OPENED' ? {status: 'DELIVERED'} : {}),
         },
       });
-    }
+    });
+
+    await prisma.$transaction(updates);
+    console.log(`Updated ${updates.length} emails in a single transaction`);
   }
 
   console.log(dryRun ? '=== DRY RUN COMPLETE (no changes made) ===' : '=== DONE ===');
