@@ -18,7 +18,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
-  SelectItemWithDescription,
+
   SelectTrigger,
   SelectValue,
   StickySaveBar,
@@ -123,16 +123,15 @@ export default function TemplateEditorPage() {
     if (!testEmailAddress) return;
     setSendingTestEmail(true);
     try {
-      // 直接帶 editor 目前的內容，不需要先存檔
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await network.fetch('POST', `/templates/${id}/test`, {
+      // Send draft content directly without saving first
+      await network.fetch<unknown, never>('POST', `/templates/${id}/test`, {
         email: testEmailAddress,
         subject: editedTemplate.subject,
         body: editedTemplate.body,
         from: editedTemplate.from,
         fromName: editedTemplate.fromName || null,
         replyTo: editedTemplate.replyTo || null,
-      } as any);
+      } as Record<string, unknown> as never);
       toast.success(`Test email sent to ${testEmailAddress}`);
       setIsTestEmailDialogOpen(false);
       setTestEmailAddress('');
