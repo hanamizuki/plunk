@@ -181,14 +181,6 @@ export default function TemplateEditorPage() {
                   : 'All changes saved'}
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setIsTestEmailDialogOpen(true)}
-          >
-            <Send className="h-4 w-4" />
-            <span className="hidden sm:inline">Send Test</span>
-          </Button>
         </div>
 
         <form onSubmit={handleSave} className="space-y-6">
@@ -333,10 +325,20 @@ export default function TemplateEditorPage() {
               <Trash2 className="h-4 w-4" />
               Delete Template
             </Button>
-            <Button type="submit" disabled={!hasChanges || isSubmitting}>
-              <Save className="h-4 w-4" />
-              {isSubmitting ? 'Saving...' : 'Save Changes'}
-            </Button>
+            <div className="flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsTestEmailDialogOpen(true)}
+              >
+                <Send className="h-4 w-4" />
+                <span className="hidden sm:inline">Send Test</span>
+              </Button>
+              <Button type="submit" disabled={!hasChanges || isSubmitting}>
+                <Save className="h-4 w-4" />
+                {isSubmitting ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
           </div>
         </form>
       </div>
