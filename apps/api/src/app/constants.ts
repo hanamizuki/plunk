@@ -28,6 +28,26 @@ export const PORT = Number(validateEnv('PORT', '8080'));
 // URLs
 export const API_URI = validateEnv('API_URI');
 export const DASHBOARD_URI = validateEnv('DASHBOARD_URI');
+
+// Per-project unsubscribe URL overrides (env-driven, no DB change needed).
+// UNSUBSCRIBE_URI: global fallback for all projects.
+// CUSTOM_UNSUBSCRIBE_URLS: JSON map of projectId → base URL for per-project overrides.
+// Resolution: CUSTOM_UNSUBSCRIBE_URLS[projectId] → UNSUBSCRIBE_URI → DASHBOARD_URI.
+export const UNSUBSCRIBE_URI = validateEnv('UNSUBSCRIBE_URI', '');
+const CUSTOM_UNSUBSCRIBE_URLS: Record<string, string> = (() => {
+  const raw = validateEnv('CUSTOM_UNSUBSCRIBE_URLS', '{}');
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+})();
+
+export function getUnsubscribeBaseUrl(projectId: string): string {
+  const url = CUSTOM_UNSUBSCRIBE_URLS[projectId] || UNSUBSCRIBE_URI || DASHBOARD_URI;
+  return url.endsWith('/') ? url.slice(0, -1) : url;
+}
+
 export const LANDING_URI = validateEnv('LANDING_URI');
 export const WIKI_URI = validateEnv('WIKI_URI');
 
