@@ -77,13 +77,24 @@ ssh -i ~/.secrets/aws-ec2/hana-prod.pem ubuntu@13.193.173.27 \
   "docker exec mojo-plunk-postgres psql -U plunk -d plunk -c \"SELECT id, name FROM projects;\""
 ```
 
+## DASHBOARD_DOMAIN（必要）
+
+Container 內部有 nginx 做 hostname-based 路由。不認識的 hostname 會被導到 API server（回 404），
+不會到 web app。**必須把自訂 domain 加到 `DASHBOARD_DOMAIN`**（空格分隔）：
+
+```yaml
+DASHBOARD_DOMAIN: "mail.mojoapp.ai mail.ethtaipei.org mail.hanamizuki.tw"
+```
+
+不加這個，退訂頁面會回 `{"error":"Unknown route"}` 404。
+
 ## Caddy 設定
 
 每個自訂 domain 都需要 Caddy entry 指向同一個 Plunk dashboard：
 
 ```
 mail.brand-a.com, mail.brand-b.com {
-    reverse_proxy localhost:3000
+    reverse_proxy mojo-plunk-app:80
 }
 ```
 
@@ -93,11 +104,12 @@ Caddy 自動處理 Let's Encrypt 憑證。DNS 的 A record 要指向 EC2 IP `13.
 
 1. 在 Plunk dashboard 建 project → 拿到 UUID
 2. 在 `docker-compose.yml` 的 `CUSTOM_UNSUBSCRIBE_URLS` JSON 加一行
-3. 在 Caddyfile 加 domain
-4. DNS 加 A record
-5. `docker compose up -d app`（重啟生效）
-6. `sudo caddy reload --config /etc/caddy/Caddyfile`（或 `systemctl reload caddy`）
-7. 發測試信驗證連結
+3. 在 `DASHBOARD_DOMAIN` 加上新 domain（空格分隔）
+4. 在 Caddyfile 加 domain entry
+5. DNS 加 A record → `13.193.173.27`
+6. `docker compose up -d app`（重啟生效）
+7. `docker exec caddy caddy reload --config /etc/caddy/Caddyfile`
+8. 發測試信驗證連結
 
 ## Upstream 合併後驗證
 
