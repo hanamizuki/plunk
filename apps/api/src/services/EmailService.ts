@@ -3,7 +3,7 @@ import {EmailSourceType, EmailStatus, TrackingMode} from '@plunk/db';
 import {toPrismaJson} from '@plunk/types';
 import signale from 'signale';
 
-import {DASHBOARD_URI, LANDING_URI, STRIPE_ENABLED} from '../app/constants.js';
+import {DASHBOARD_URI, LANDING_URI, STRIPE_ENABLED, getUnsubscribeBaseUrl} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {createTranslatorSync, renderTemplate} from '@plunk/shared';
@@ -1124,6 +1124,14 @@ export class EmailService {
       html = html.replace('</body>', `${footerHtml}</body>`);
     } else {
       html = `${html}${footerHtml}`;
+    }
+
+    // Replace unsubscribe/subscribe/manage URLs with project-specific base URL
+    const customBase = getUnsubscribeBaseUrl(project.id);
+    if (customBase !== DASHBOARD_URI) {
+      html = html.replaceAll(`${DASHBOARD_URI}/unsubscribe/`, `${customBase}/unsubscribe/`);
+      html = html.replaceAll(`${DASHBOARD_URI}/subscribe/`, `${customBase}/subscribe/`);
+      html = html.replaceAll(`${DASHBOARD_URI}/manage/`, `${customBase}/manage/`);
     }
 
     return html;
