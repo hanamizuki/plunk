@@ -33,12 +33,20 @@ export const DASHBOARD_URI = validateEnv('DASHBOARD_URI');
 // UNSUBSCRIBE_URI: global fallback for all projects.
 // CUSTOM_UNSUBSCRIBE_URLS: JSON map of projectId → base URL for per-project overrides.
 // Resolution: CUSTOM_UNSUBSCRIBE_URLS[projectId] → UNSUBSCRIBE_URI → DASHBOARD_URI.
-export const UNSUBSCRIBE_URI = validateEnv('UNSUBSCRIBE_URI', '');
+const UNSUBSCRIBE_URI = validateEnv('UNSUBSCRIBE_URI', '');
 const CUSTOM_UNSUBSCRIBE_URLS: Record<string, string> = (() => {
   const raw = validateEnv('CUSTOM_UNSUBSCRIBE_URLS', '{}');
   try {
-    return JSON.parse(raw);
-  } catch {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      console.warn('[PLUNK] CUSTOM_UNSUBSCRIBE_URLS must be a JSON object, ignoring');
+      return {};
+    }
+    return parsed;
+  } catch (e) {
+    if (raw !== '{}') {
+      console.warn('[PLUNK] CUSTOM_UNSUBSCRIBE_URLS is not valid JSON, ignoring:', (e as Error).message);
+    }
     return {};
   }
 })();

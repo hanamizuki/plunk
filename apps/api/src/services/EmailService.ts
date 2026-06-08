@@ -1126,12 +1126,15 @@ export class EmailService {
       html = `${html}${footerHtml}`;
     }
 
-    // Replace unsubscribe/subscribe/manage URLs with project-specific base URL
+    // Replace unsubscribe/subscribe/manage URLs with project-specific base URL.
+    // Normalize DASHBOARD_URI the same way getUnsubscribeBaseUrl does (strip trailing slash)
+    // so the comparison and replaceAll work even if DASHBOARD_URI has a trailing slash.
+    const dashboardBase = DASHBOARD_URI.endsWith('/') ? DASHBOARD_URI.slice(0, -1) : DASHBOARD_URI;
     const customBase = getUnsubscribeBaseUrl(project.id);
-    if (customBase !== DASHBOARD_URI) {
-      html = html.replaceAll(`${DASHBOARD_URI}/unsubscribe/`, `${customBase}/unsubscribe/`);
-      html = html.replaceAll(`${DASHBOARD_URI}/subscribe/`, `${customBase}/subscribe/`);
-      html = html.replaceAll(`${DASHBOARD_URI}/manage/`, `${customBase}/manage/`);
+    if (customBase !== dashboardBase) {
+      html = html.replaceAll(`${dashboardBase}/unsubscribe/`, `${customBase}/unsubscribe/`);
+      html = html.replaceAll(`${dashboardBase}/subscribe/`, `${customBase}/subscribe/`);
+      html = html.replaceAll(`${dashboardBase}/manage/`, `${customBase}/manage/`);
     }
 
     return html;
