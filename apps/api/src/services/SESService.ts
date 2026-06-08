@@ -5,7 +5,6 @@ import {
   AWS_SES_ACCESS_KEY_ID,
   AWS_SES_REGION,
   AWS_SES_SECRET_ACCESS_KEY,
-  DASHBOARD_URI,
   MAIL_FROM_SUBDOMAIN,
   SES_CONFIGURATION_SET,
   SES_CONFIGURATION_SET_NO_TRACKING,
@@ -93,14 +92,14 @@ export async function sendRawEmail({
   attachments,
   tracking = true,
 }: SendRawEmailParams): Promise<{messageId: string}> {
-  // Check if the body contains an unsubscribe link
-  const regex = /unsubscribe\/([a-f\d-]+)"/;
-  const containsUnsubscribeLink = regex.exec(content.html);
+  // Extract the full unsubscribe URL from the HTML href attribute.
+  // The URL may have been rewritten by compile() to use a custom base,
+  // so we extract it as-is instead of rebuilding from DASHBOARD_URI.
+  const unsubscribeMatch = /href="(https?:\/\/[^"]*\/unsubscribe\/[a-f\d-]+)"/.exec(content.html);
 
   let unsubscribeHeader = '';
-  if (containsUnsubscribeLink?.[1]) {
-    const unsubscribeId = containsUnsubscribeLink[1];
-    unsubscribeHeader = `List-Unsubscribe: <${DASHBOARD_URI}/unsubscribe/${unsubscribeId}>`;
+  if (unsubscribeMatch?.[1]) {
+    unsubscribeHeader = `List-Unsubscribe: <${unsubscribeMatch[1]}>`;
   }
 
   // Generate unique boundaries for multipart messages

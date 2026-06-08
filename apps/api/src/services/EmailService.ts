@@ -3,7 +3,7 @@ import {EmailSourceType, EmailStatus, TrackingMode} from '@plunk/db';
 import {toPrismaJson} from '@plunk/types';
 import signale from 'signale';
 
-import {DASHBOARD_URI, LANDING_URI, STRIPE_ENABLED} from '../app/constants.js';
+import {DASHBOARD_URI, LANDING_URI, STRIPE_ENABLED, getUnsubscribeBaseUrl} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
 import {createTranslatorSync, renderTemplate} from '@plunk/shared';
@@ -1124,6 +1124,21 @@ export class EmailService {
       html = html.replace('</body>', `${footerHtml}</body>`);
     } else {
       html = `${html}${footerHtml}`;
+    }
+
+    // Replace unsubscribe/subscribe/manage URLs with project-specific base URL.
+    // Normalize DASHBOARD_URI (strip trailing slash) so the comparison works correctly.
+    // Also replace the raw form (with trailing slash → double-slash URLs) in case
+    // DASHBOARD_URI was configured with a trailing slash.
+    const dashboardBase = DASHBOARD_URI.endsWith('/') ? DASHBOARD_URI.slice(0, -1) : DASHBOARD_URI;
+    const customBase = getUnsubscribeBaseUrl(project.id);
+    if (customBase !== dashboardBase) {
+      for (const path of ['/unsubscribe/', '/subscribe/', '/manage/']) {
+        html = html.replaceAll(`${dashboardBase}${path}`, `${customBase}${path}`);
+        if (DASHBOARD_URI !== dashboardBase) {
+          html = html.replaceAll(`${DASHBOARD_URI}${path}`, `${customBase}${path}`);
+        }
+      }
     }
 
     return html;
