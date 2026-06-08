@@ -1127,14 +1127,18 @@ export class EmailService {
     }
 
     // Replace unsubscribe/subscribe/manage URLs with project-specific base URL.
-    // Normalize DASHBOARD_URI the same way getUnsubscribeBaseUrl does (strip trailing slash)
-    // so the comparison and replaceAll work even if DASHBOARD_URI has a trailing slash.
+    // Normalize DASHBOARD_URI (strip trailing slash) so the comparison works correctly.
+    // Also replace the raw form (with trailing slash → double-slash URLs) in case
+    // DASHBOARD_URI was configured with a trailing slash.
     const dashboardBase = DASHBOARD_URI.endsWith('/') ? DASHBOARD_URI.slice(0, -1) : DASHBOARD_URI;
     const customBase = getUnsubscribeBaseUrl(project.id);
     if (customBase !== dashboardBase) {
-      html = html.replaceAll(`${dashboardBase}/unsubscribe/`, `${customBase}/unsubscribe/`);
-      html = html.replaceAll(`${dashboardBase}/subscribe/`, `${customBase}/subscribe/`);
-      html = html.replaceAll(`${dashboardBase}/manage/`, `${customBase}/manage/`);
+      for (const path of ['/unsubscribe/', '/subscribe/', '/manage/']) {
+        html = html.replaceAll(`${dashboardBase}${path}`, `${customBase}${path}`);
+        if (DASHBOARD_URI !== dashboardBase) {
+          html = html.replaceAll(`${DASHBOARD_URI}${path}`, `${customBase}${path}`);
+        }
+      }
     }
 
     return html;

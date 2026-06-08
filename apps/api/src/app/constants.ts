@@ -42,7 +42,15 @@ const CUSTOM_UNSUBSCRIBE_URLS: Record<string, string> = (() => {
       console.warn('[PLUNK] CUSTOM_UNSUBSCRIBE_URLS must be a JSON object, ignoring');
       return {};
     }
-    return parsed;
+    const filtered: Record<string, string> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (typeof val === 'string') {
+        filtered[key] = val;
+      } else {
+        console.warn(`[PLUNK] CUSTOM_UNSUBSCRIBE_URLS["${key}"] is not a string, ignoring`);
+      }
+    }
+    return filtered;
   } catch (e) {
     if (raw !== '{}') {
       console.warn('[PLUNK] CUSTOM_UNSUBSCRIBE_URLS is not valid JSON, ignoring:', (e as Error).message);
