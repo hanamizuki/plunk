@@ -19,7 +19,7 @@ description: Deploy Plunk Fork
 - **CI workflow**：`.github/workflows/docker-publish.yml`（push 到 `next` 或 `deploy/custom` 自動觸發，亦可 `workflow_dispatch`）
 - **Branch**：`deploy/custom` — 基於 upstream release tag，疊上 fork 專屬 patch
 - **Upstream**：`useplunk/plunk`，main branch 為 `next`，最新 release tag 為基底
-- 對外網域：`mail.mojoapp.ai`（dashboard, 80）、`api.mail.mojoapp.ai`（API, 8080），透過 Caddy reverse proxy
+- 對外網域：`plunk.hanamizuki.tw`（dashboard, 80）、`api.plunk.hanamizuki.tw`（API, 8080），透過 Caddy reverse proxy。舊 API domain `api.mail.mojoapp.ai` 在 Caddy 保留向後相容
 - Infra（`mojo-plunk-postgres` / `redis` / `minio` / `ntfy`）部署時不動，只換 `app`
 
 > 舊紀錄曾用 `43.207.140.90` / `~/Sites/_Keys/hana2024.pem` / `mojo-plunk-next`，皆為搬遷前的過時資料，勿用。
@@ -76,8 +76,8 @@ ssh -i ~/.secrets/aws-ec2/hana-prod.pem ubuntu@13.193.173.27 \
 ```bash
 ssh -i ~/.secrets/aws-ec2/hana-prod.pem ubuntu@13.193.173.27 \
   "docker ps --format '{{.Names}} {{.Image}} {{.Status}}' | grep mojo-plunk-app"
-curl -s -o /dev/null -w '%{http_code}\n' https://api.mail.mojoapp.ai/templates
-curl -s -o /dev/null -w '%{http_code}\n' https://mail.mojoapp.ai/
+curl -s -o /dev/null -w '%{http_code}\n' https://api.plunk.hanamizuki.tw/templates
+curl -s -o /dev/null -w '%{http_code}\n' https://plunk.hanamizuki.tw/
 ```
 
 ## 回滾（換回官方版）
