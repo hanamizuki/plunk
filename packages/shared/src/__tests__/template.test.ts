@@ -75,16 +75,28 @@ describe('renderTemplate', () => {
   });
 
   describe('?? default with empty-string values', () => {
-    it('falls back to the default for empty strings', () => {
+    // Send paths pass contact data both spread at top level and under `data`
+    // (the production shape). A top-level-only '' is dropped by the || lookup
+    // chain and falls back via `??` alone; the data-object '' is returned
+    // verbatim by the third lookup and needs the blank-string branch.
+    it('falls back to the default for empty strings (production shape)', () => {
+      expect(renderTemplate('嗨 {{display_name ?? 朋友}}，', {display_name: '', data: {display_name: ''}})).toBe(
+        '嗨 朋友，',
+      );
+    });
+
+    it('falls back to the default for top-level-only empty strings', () => {
       expect(renderTemplate('嗨 {{display_name ?? 朋友}}，', {display_name: ''})).toBe('嗨 朋友，');
     });
 
     it('falls back to the default for whitespace-only strings', () => {
-      expect(renderTemplate('嗨 {{display_name ?? 朋友}}，', {display_name: '  '})).toBe('嗨 朋友，');
+      expect(renderTemplate('嗨 {{display_name ?? 朋友}}，', {display_name: '  ', data: {display_name: '  '}})).toBe(
+        '嗨 朋友，',
+      );
     });
 
     it('renders empty as-is when no default is given', () => {
-      expect(renderTemplate('嗨 {{display_name}}，', {display_name: ''})).toBe('嗨 ，');
+      expect(renderTemplate('嗨 {{display_name}}，', {display_name: '', data: {display_name: ''}})).toBe('嗨 ，');
     });
 
     it('does not treat 0 as empty', () => {

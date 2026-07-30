@@ -291,7 +291,9 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
       ...((contact.data as Record<string, unknown> | null) || {}),
     };
 
-    return replaceVariables(subject, contactData);
+    // Subject is plain text, mirroring EmailService.format's unescaped subject;
+    // React escapes text nodes on render, so escaping here would double-escape
+    return renderTemplate(subject, contactData);
   };
 
   const getPreviewContainerWidth = () => {
@@ -499,6 +501,10 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
                     )}
                     <iframe
                       ref={previewIframeRef}
+                      // allow-same-origin without allow-scripts: the parent can
+                      // still document.write and measure height, but scripts and
+                      // javascript: URLs inside the previewed email are blocked
+                      sandbox="allow-same-origin"
                       className="w-full border-0"
                       style={{
                         minHeight: '400px',
@@ -605,6 +611,10 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
                     )}
                     <iframe
                       ref={previewIframeRef}
+                      // allow-same-origin without allow-scripts: the parent can
+                      // still document.write and measure height, but scripts and
+                      // javascript: URLs inside the previewed email are blocked
+                      sandbox="allow-same-origin"
                       className="w-full border-0"
                       style={{
                         minHeight: '400px',

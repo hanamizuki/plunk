@@ -65,9 +65,12 @@ export function renderTemplate(
 
     let resolved = value ?? defaultValue ?? '';
 
-    // `??` also falls back on empty/whitespace-only strings: contact data often
-    // stores '' for unset fields, and a blank display_name must render the
-    // default instead of producing greetings like "Hi ,"
+    // `??` also falls back on blank strings. Two shapes reach this branch: ''
+    // stored under the data object (the third lookup returns it verbatim — the
+    // || chain only skips falsy values in EARLIER lookups) and whitespace-only
+    // strings (truthy, so even the first lookup returns them). Both otherwise
+    // render greetings like "Hi ,". A top-level-only '' never gets here — the
+    // || chain yields undefined and the ?? above already applies the default.
     if (typeof resolved === 'string' && resolved.trim() === '' && defaultValue !== undefined) {
       resolved = defaultValue;
     }
