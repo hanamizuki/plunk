@@ -4,15 +4,24 @@ const HTML_ESCAPES: Record<string, string> = {
   '>': '&gt;',
   '"': '&quot;',
   "'": '&#39;',
+  '`': '&#x60;',
+  '=': '&#x3D;',
 };
 
 /**
- * Escape the five HTML-special characters so a value renders as literal text.
- * Used for template variable substitution into HTML bodies; also neutralizes
- * comment-breaking sequences ("-->" becomes "--&gt;").
+ * Escape HTML-special characters so a value renders as literal text. The set
+ * mirrors Handlebars' escapeExpression: the five classic characters plus
+ * backtick and equals, which blunt injection into unquoted attributes.
+ * Also neutralizes comment-breaking sequences ("-->" becomes "--&gt;").
+ *
+ * Escaped values are fully safe in text content and quoted attribute values.
+ * Unquoted attribute placements ({{var}} after a bare attr=) are NOT a
+ * supported context — whitespace cannot be escaped, so a value can still
+ * introduce valueless boolean attributes there. Always quote attributes in
+ * templates: href="{{url}}", never href={{url}}.
  */
 export function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, c => HTML_ESCAPES[c] as string);
+  return value.replace(/[&<>"'`=]/g, c => HTML_ESCAPES[c] as string);
 }
 
 /**

@@ -2,8 +2,8 @@ import {describe, expect, it} from 'vitest';
 import {escapeHtml, renderTemplate} from '../template';
 
 describe('escapeHtml', () => {
-  it('escapes the five HTML-special characters', () => {
-    expect(escapeHtml(`&<>"'`)).toBe('&amp;&lt;&gt;&quot;&#39;');
+  it('escapes the HTML-special characters (Handlebars set)', () => {
+    expect(escapeHtml('&<>"\'`=')).toBe('&amp;&lt;&gt;&quot;&#39;&#x60;&#x3D;');
   });
 
   it('leaves plain text untouched', () => {
@@ -58,9 +58,19 @@ describe('renderTemplate', () => {
       expect(renderTemplate('<p>Hi {{name}} &amp; co</p>', {name: 'Ada'}, html)).toBe('<p>Hi Ada &amp; co</p>');
     });
 
-    it('keeps URLs usable in href attributes', () => {
+    it('keeps URLs usable in quoted href attributes', () => {
+      // `=` is entity-escaped, and browsers decode entities in quoted attribute
+      // values before URL resolution, so the link still targets ?token=abc123
       const rendered = renderTemplate('<a href="{{gift_url}}">', {gift_url: 'https://x.tw/gift?token=abc123'}, html);
-      expect(rendered).toBe('<a href="https://x.tw/gift?token=abc123">');
+      expect(rendered).toBe('<a href="https://x.tw/gift?token&#x3D;abc123">');
+    });
+
+    it('cannot bind attribute values in unquoted attribute placements', () => {
+      // Unquoted attributes are unsupported (whitespace splits), but escaping
+      // `=` keeps an injected token from carrying a value like a handler
+      expect(renderTemplate('<div title={{v}}>', {v: 'x onfocus=alert(1)'}, html)).toBe(
+        '<div title=x onfocus&#x3D;alert(1)>',
+      );
     });
 
     it('keeps the <li> wrapper for arrays but escapes each element', () => {
