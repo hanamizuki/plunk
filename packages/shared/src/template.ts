@@ -19,6 +19,11 @@ const HTML_ESCAPES: Record<string, string> = {
  * supported context — whitespace cannot be escaped, so a value can still
  * introduce valueless boolean attributes there. Always quote attributes in
  * templates: href="{{url}}", never href={{url}}.
+ *
+ * CSS contexts (style="..." attributes and <style> blocks) are likewise NOT a
+ * supported context for substituted values — browsers decode entities in
+ * attribute values before the CSS parser runs, so no character escaping can
+ * neutralize CSS metacharacters there. Keep variables out of CSS entirely.
  */
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"'`=]/g, c => HTML_ESCAPES[c] as string);
