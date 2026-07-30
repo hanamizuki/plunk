@@ -561,8 +561,10 @@ export class WorkflowExecutionService {
       manageUrl: `${DASHBOARD_URI}/manage/${contact.id}`,
     };
 
-    const renderedSubject = this.renderTemplate(step.template.subject, variables);
-    const renderedBody = this.renderTemplate(step.template.body, variables);
+    // Subject is a plain-text MIME header (no escaping); body is HTML, so
+    // substituted values are escaped to keep user-controlled data inert
+    const renderedSubject = renderTemplate(step.template.subject, variables);
+    const renderedBody = renderTemplate(step.template.body, variables, {escapeHtml: true});
 
     // Determine recipient email
     // Schema validation ensures customEmail exists when type is CUSTOM
@@ -1108,14 +1110,6 @@ export class WorkflowExecutionService {
     // Process the next step
     // All steps are processed immediately - DELAY and WAIT_FOR_EVENT will pause the workflow internally
     await this.processStepExecution(execution.id, nextStep.id);
-  }
-
-  /**
-   * Helper: Render template with variables
-   * Uses shared template rendering from @plunk/shared
-   */
-  private static renderTemplate(template: string, variables: Record<string, unknown>): string {
-    return renderTemplate(template, variables);
   }
 
   /**

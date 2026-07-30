@@ -105,6 +105,7 @@ DB 若已被 `prisma migrate deploy` 改寫，回滾 schema 需 restore 備份�
 | Send test email (#331) | EmailService, template API, web UI | ✓ 要發 PR | 從 upstream `v0.11.0` 開乾淨 branch cherry-pick |
 | Preview-as-segment (#394) | campaign editor, web UI | ✓ 要發 PR | 從 upstream `v0.11.0` 開乾淨 branch cherry-pick |
 | Per-project unsubscribe URL | `constants.ts`, `EmailService.ts`, `SESService.ts` | ✗ 不回 upstream | env var 驅動，詳見 `patches/per-project-unsubscribe-url.md` |
+| Template 變數 HTML 逃脫 | `packages/shared/src/template.ts`, `EmailService.ts`, `WorkflowExecutionService.ts`, `EmailEditor.tsx` | ✗ 不回 upstream | body 變數逃脫（subject 不逃）＋ `??` 對空字串生效；upstream 使用者可能依賴變數帶 HTML，故 fork-only |
 
 ### 鐵則：分清 upstream vs fork-only
 
@@ -133,6 +134,7 @@ git tag -l --sort=-v:refname | head -3           # 看有沒有新 release tag
 | `apps/api/src/app/constants.ts` | `UNSUBSCRIBE_URI`、`CUSTOM_UNSUBSCRIBE_URLS`、`getUnsubscribeBaseUrl()` 是否還在 |
 | `apps/api/src/services/EmailService.ts` | `compile()` 尾端的 URL 替換邏輯是否還在 |
 | `apps/api/src/services/SESService.ts` | `List-Unsubscribe` regex 是否仍從 HTML 抽完整 URL |
+| `packages/shared/src/template.ts` | `escapeHtml` option 與空字串 default fallback 是否還在（body 呼叫點帶 `{escapeHtml: true}`、subject 不帶） |
 
 4. `yarn build && yarn lint`
 5. 測試 → 部署（照上方流程）

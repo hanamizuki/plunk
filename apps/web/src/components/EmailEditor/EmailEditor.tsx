@@ -250,7 +250,9 @@ export function EmailEditor({value, onChange, placeholder, subject, from, replyT
   };
 
   const replaceVariables = (text: string, contactData: Record<string, unknown>) => {
-    return renderTemplate(text, contactData);
+    // escapeHtml mirrors the send path (EmailService.format), so the preview
+    // shows contact data as inert text exactly like the delivered email
+    return renderTemplate(text, contactData, {escapeHtml: true});
   };
 
   const getPreviewHtml = () => {

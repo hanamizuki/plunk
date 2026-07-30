@@ -634,8 +634,11 @@ export class EmailService {
     body: string;
   } {
     return {
+      // Subject is a plain-text MIME header, not HTML — must not be escaped
       subject: renderTemplate(subject, data),
-      body: renderTemplate(body, data),
+      // Body is HTML — escape substituted values so user-controlled contact
+      // data (e.g. display_name) cannot inject markup or break comments
+      body: renderTemplate(body, data, {escapeHtml: true}),
     };
   }
 
