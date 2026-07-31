@@ -618,9 +618,12 @@ export class Webhooks {
             where: {id: project.id},
             data: {
               disabled: true,
-              // Preserve an existing security/manual disable reason — otherwise a later
-              // invoice.paid would use PAYMENT_FAILED to silently lift that suspension.
-              ...(project.disabled && project.disabledReason ? {} : {disabledReason: 'PAYMENT_FAILED'}),
+              // Only stamp the reason when this event is what disables the project.
+              // An already-disabled project keeps whatever reason it had, including a
+              // NULL one — projects suspended before the disabledReason column existed
+              // were never backfilled, and treating NULL as "no reason on record" would
+              // let a later invoice.paid lift a manual or security suspension.
+              ...(project.disabled ? {} : {disabledReason: 'PAYMENT_FAILED'}),
             },
           });
 
