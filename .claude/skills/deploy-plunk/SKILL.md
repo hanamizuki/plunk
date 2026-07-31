@@ -52,7 +52,13 @@ gh api "repos/hanamizuki/plunk/actions/runs?branch=deploy/custom&per_page=1" \
 ### 2.5 v0.12.0 migration pre-check（只有首次部署 v0.12.0 那次要跑）
 
 `20260615120000_normalize_contact_emails` 會合併同信箱大小寫變體的 contacts 並 **DELETE** 重複列。
-它有兩個已知風險，部署前用下面兩句確認實際資料不會踩到（2026-07-31 實測都是 0）：
+它有三個已知風險，部署前用下面這段確認實際資料不會踩到（2026-07-31 實測全為 0）。
+
+**這三個風險都在本機用 production 資料副本＋人工注入的重複資料實測重現過**，不是理論推導：
+`pk_collisions` 會讓 migration 報 `duplicate key value violates unique constraint
+"segment_memberships_pkey"` 並整個 rollback（部署卡住但資料完好）；
+`active_membership_loss` 更陰險——migration **正常 commit**，但合併後的聯絡人靜默掉出 segment，
+從此收不到該 segment 的 campaign。
 
 ```bash
 ssh -i ~/.secrets/aws-ec2/hana-prod.pem ubuntu@13.193.173.27 \
@@ -73,12 +79,20 @@ SELECT 'pk_collisions', count(*) FROM (
   JOIN segment_memberships sm ON sm.\\\"contactId\\\" = m.dup_id
   WHERE NOT EXISTS (SELECT 1 FROM segment_memberships s2
     WHERE s2.\\\"contactId\\\" = m.survivor_id AND s2.\\\"segmentId\\\" = sm.\\\"segmentId\\\")
-  GROUP BY m.survivor_id, sm.\\\"segmentId\\\" HAVING count(*) > 1) c;\""
+  GROUP BY m.survivor_id, sm.\\\"segmentId\\\" HAVING count(*) > 1) c
+UNION ALL
+-- C) 會不會靜默丟掉活躍的 segment 成員資格
+--    （survivor 對某 segment 已 exited，但某個 dup 對同一 segment 仍活躍）
+SELECT 'active_membership_loss', count(*) FROM map m
+JOIN segment_memberships dsm ON dsm.\\\"contactId\\\" = m.dup_id AND dsm.\\\"exitedAt\\\" IS NULL
+JOIN segment_memberships ssm ON ssm.\\\"contactId\\\" = m.survivor_id
+  AND ssm.\\\"segmentId\\\" = dsm.\\\"segmentId\\\" AND ssm.\\\"exitedAt\\\" IS NOT NULL;\""
 ```
 
-- **兩個都 0** → migration 是 no-op，直接部署
+- **三個都 0** → migration 是 no-op，直接部署
 - **`merge_rows` > 0** → 有 contacts 會被合併（survivor = 最舊、退訂狀態取 AND）。先人工確認受影響的人是誰再決定
-- **`pk_collisions` > 0** → **不要部署**。upstream migration 的 dedup 只比對 survivor 已有的 membership，漏掉「兩個 dup 同屬同一個 survivor 沒有的 segment」，reassign 時會撞 `(contactId, segmentId)` 主鍵讓 migration abort（交易會 rollback、資料不損，但部署卡住）。先手動清掉重複的 membership 再部署
+- **`pk_collisions` > 0** → **不要部署**。upstream migration 的 dedup 只比對 survivor 已有的 membership，漏掉「兩個 dup 同屬同一個 survivor 沒有的 segment」，reassign 時會撞 `(contactId, segmentId)` 主鍵讓 migration abort。先手動清掉重複的 membership 再部署
+- **`active_membership_loss` > 0` → **不要部署**。這個不會報錯、會直接 commit，事後很難發現。部署前先把 survivor 那筆 membership 的 `exitedAt` 設回 `NULL`（活躍者勝，與 migration 自己對退訂採「一個退訂就算退訂」的保守原則一致），再跑 migration
 
 > 注意：**不要用 `btrim` 版本的檢查**。Postgres `btrim(text)` 預設只去掉半形空格，
 > 而 app 端 `ContactService.normalizeEmail` 用 JS `.trim()`（含 tab / NBSP 等全部 Unicode 空白）。
