@@ -1008,16 +1008,6 @@ export class WorkflowExecutionService {
   }
 
   /**
-   * Helper: Render template variables WITHOUT HTML escaping.
-   * Webhook url/headers/body are URL/JSON contexts, not HTML — escaping
-   * would corrupt substituted values (& → &amp;, " → &quot;). The
-   * SEND_EMAIL step escapes its HTML body at the call site instead.
-   */
-  private static renderTemplate(template: string, variables: Record<string, unknown>): string {
-    return renderTemplate(template, variables);
-  }
-
-  /**
    * Helper: Recursively render template variables in any JSON-shaped value.
    * Strings are rendered, arrays/objects are walked, and non-string scalars
    * (numbers, booleans, null) are returned untouched.
@@ -1177,6 +1167,14 @@ export class WorkflowExecutionService {
     // Process the next step
     // All steps are processed immediately - DELAY and WAIT_FOR_EVENT will pause the workflow internally
     await this.processStepExecution(execution.id, nextStep.id);
+  }
+
+  /**
+   * Helper: Render template with variables
+   * Uses shared template rendering from @plunk/shared
+   */
+  private static renderTemplate(template: string, variables: Record<string, unknown>): string {
+    return renderTemplate(template, variables);
   }
 
   /**

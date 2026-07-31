@@ -511,9 +511,12 @@ export default function ContactsPage() {
                   type="button"
                   aria-label="Clear search"
                   onClick={() => {
+                    // Both search states change in the same render, so the debounced
+                    // effect's equality guard skips its clearSelection — clear here
                     setSearchInput('');
                     setSearch('');
                     resetPagination();
+                    clearSelection();
                   }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 transition-colors"
                 >

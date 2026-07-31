@@ -106,12 +106,12 @@ export default function TemplatesPage() {
   }, [searchInput]);
 
   // Clear row selection whenever the visible data set changes (page, search,
-  // type filter). Selections only make sense for currently-visible rows —
+  // type filter, sort). Selections only make sense for currently-visible rows —
   // keeping a stale selection across pagination would let the user bulk-delete
   // templates they can no longer see.
   useEffect(() => {
     setRowSelection({});
-  }, [page, search, typeFilter]);
+  }, [page, search, typeFilter, sorting]);
 
   const handleDelete = async () => {
     if (!templateToDelete) return;

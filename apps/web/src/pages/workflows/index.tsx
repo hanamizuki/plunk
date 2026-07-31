@@ -124,13 +124,13 @@ export default function WorkflowsPage() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  // Clear row selection whenever the visible data set changes (page, search).
-  // Selections only make sense for currently-visible rows — keeping a stale
-  // selection across pagination would let the user bulk-delete workflows they
-  // can no longer see.
+  // Clear row selection whenever the visible data set changes (page, search,
+  // status filter, sort). Selections only make sense for currently-visible rows —
+  // keeping a stale selection across pagination would let the user bulk-delete
+  // workflows they can no longer see.
   useEffect(() => {
     setRowSelection({});
-  }, [page, search, statusFilter]);
+  }, [page, search, statusFilter, sorting]);
 
   const handleDelete = async () => {
     if (!workflowToDelete) return;

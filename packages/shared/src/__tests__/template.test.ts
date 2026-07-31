@@ -34,8 +34,9 @@ describe('renderTemplate', () => {
       expect(renderTemplate('Hi {{name}}', {name: '<b>Ada & Eve</b>'})).toBe('Hi <b>Ada & Eve</b>');
     });
 
-    it('wraps array values in <li> without escaping elements', () => {
-      expect(renderTemplate('<ul>{{items}}</ul>', {items: ['a', 'b']})).toBe('<ul><li>a</li>\n<li>b</li></ul>');
+    it('joins array values with ", " — no <li> markup or newlines', () => {
+      // Newlines would make undici reject the value as a webhook header
+      expect(renderTemplate('Tags: {{items}}', {items: ['a', 'b']})).toBe('Tags: a, b');
     });
   });
 

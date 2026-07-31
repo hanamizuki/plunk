@@ -71,10 +71,14 @@ export function renderTemplate(
       variables[mainKey] || // Try as top-level property
       (variables.data as Record<string, unknown>)?.[mainKey]; // Try in data object
 
-    // Handle array values (for lists) — the <li> wrapper is intentional template
-    // output, but each element is data and gets escaped like any other value
+    // Handle array values (for lists). The <li> wrapper only makes sense in an
+    // HTML context — in plain-text contexts (email subjects, webhook URLs and
+    // headers) literal tags would leak through and the newline join would even
+    // make undici reject the value as a header. Join with ', ' there instead.
     if (Array.isArray(value)) {
-      return value.map((e: string) => `<li>${escape(String(e))}</li>`).join('\n');
+      return options?.escapeHtml
+        ? value.map((e: string) => `<li>${escape(String(e))}</li>`).join('\n')
+        : value.map((e: string) => String(e)).join(', ');
     }
 
     let resolved = value ?? defaultValue ?? '';

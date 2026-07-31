@@ -26,14 +26,10 @@ export default defineConfig({
     // (see test/setup.ts). That isolation is what lets us run files in parallel
     // without the cross-test interference we used to hit with a shared DB.
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        // Cap at 4 to stay within Postgres' default max_connections=100
-        // when each worker uses connection_limit=20.
-        maxForks: 4,
-        minForks: 1,
-      },
-    },
+    // Cap at 4 workers to stay within Postgres' default max_connections=100
+    // when each worker uses connection_limit=20. (Vitest 4 removed
+    // test.poolOptions; maxForks became the top-level maxWorkers option.)
+    maxWorkers: 4,
     maxConcurrency: 5,
     // Only include our test files, not dependency tests
     include: [

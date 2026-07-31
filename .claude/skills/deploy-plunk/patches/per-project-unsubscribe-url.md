@@ -213,6 +213,20 @@ CUSTOM_UNSUBSCRIBE_URLS: '{ "16e32c0f-b9af-4f72-bfe9-1e3988fc36b6": "https://mai
 7. `docker restart caddy`（**不是** `caddy reload`，bind mount 需要 restart）
 8. 發測試信驗證退訂連結 + List-Unsubscribe header
 
+## 已知缺口：WEBHOOK step 的 unsubscribeUrl 不吃 per-project override
+
+upstream v0.12.0 新增的 WEBHOOK workflow step 會把 `{{unsubscribeUrl}}` /
+`{{subscribeUrl}}` / `{{manageUrl}}` 三個模板變數渲染進 webhook 的
+url/headers/body，值直接用 `DASHBOARD_URI` 組出來（跟 SEND_EMAIL step 用同一份
+變數）。本 patch 的 override 只發生在 `EmailService.compile()` 尾端的 HTML
+post-processing，webhook payload 完全不經過 `compile()`——所以送到 webhook 的
+`unsubscribeUrl` 一律是 dashboard 主域名，不會套用 `CUSTOM_UNSUBSCRIBE_URLS`。
+
+目前 mojo 沒有任何 workflow 用 WEBHOOK step 消費這三個變數，實際影響為零。
+若之後有 workflow 需要在 webhook payload 帶正確的 per-project 退訂連結，
+需要在 `WorkflowExecutionService.executeWebhook` 組 `variables` 時改用
+`getUnsubscribeBaseUrl(execution.workflow.projectId)` 取代 `DASHBOARD_URI`。
+
 ## Upstream 合併後驗證
 
 合併 upstream 新版後，跑以下檢查確認 patch 存活：

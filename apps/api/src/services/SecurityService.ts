@@ -779,8 +779,10 @@ export class SecurityService {
       // Institutional TLDs that imply a vetted, real-world entity behind the
       // domain (government, military, accredited education). When combined
       // with DKIM verification these effectively cannot be phishing senders.
+      // The optional suffix is restricted to exactly two letters (ccTLD form,
+      // e.g. .gov.uk, .edu.au) so generic TLDs like .edu.xyz never match.
       const institutionalTldPattern =
-        /\.(gov|mil|edu)(\.[a-z]{2,})?$|\.gc\.ca$|\.gouv\.fr$|\.gov\.uk$|\.ac\.[a-z]{2,}$/i;
+        /\.(gov|mil|edu)(\.[a-z]{2})?$|\.gc\.ca$|\.gouv\.fr$|\.gov\.uk$|\.ac\.[a-z]{2}$/i;
       const isInstitutionalDomain = institutionalTldPattern.test(senderDomain);
 
       // Skip the LLM check entirely when the sender is a verified institutional

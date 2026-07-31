@@ -561,8 +561,9 @@ export class QueueService {
       }
     }
 
-    // Cancel all pending emails for this project
-    const pendingEmails = await emailQueue.getJobs(['waiting', 'delayed']);
+    // Cancel all pending emails for this project. Emails queued with a
+    // priority sit in the 'prioritized' state instead of 'waiting'.
+    const pendingEmails = await emailQueue.getJobs(['waiting', 'delayed', 'prioritized']);
     for (const job of pendingEmails) {
       const email = await prisma.email.findUnique({
         where: {id: job.data.emailId},

@@ -143,12 +143,12 @@ export default function CampaignsPage() {
   }, [searchInput]);
 
   // Clear row selection whenever the visible data set changes (page, search,
-  // status filter). Selections only make sense for currently-visible rows —
+  // status filter, sort). Selections only make sense for currently-visible rows —
   // keeping a stale selection across pagination would let the user bulk-delete
   // campaigns they can no longer see.
   useEffect(() => {
     setRowSelection({});
-  }, [page, search, statusFilter]);
+  }, [page, search, statusFilter, sorting]);
 
   const handleCancel = async () => {
     if (!campaignToCancel) return;
