@@ -42,7 +42,13 @@ export class TemplateService {
         where,
         skip,
         take: pageSize,
-        orderBy: {[sort.field]: sort.direction} as Prisma.TemplateOrderByWithRelationInput,
+        orderBy: [
+          {[sort.field]: sort.direction} as Prisma.TemplateOrderByWithRelationInput,
+          // Tie-breaker. Sort keys here are not unique, and SQL leaves tied rows
+          // unordered, so skip/take pagination could otherwise repeat one row on
+          // the next page while skipping another.
+          {id: 'asc'},
+        ],
       }),
       prisma.template.count({where}),
     ]);

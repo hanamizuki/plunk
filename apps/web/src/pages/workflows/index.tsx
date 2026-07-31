@@ -138,6 +138,8 @@ export default function WorkflowsPage() {
     try {
       await network.fetch('DELETE', `/workflows/${workflowToDelete}`);
       toast.success('Workflow deleted successfully');
+      // Drop the row from the selection too — see the note in the templates list.
+      setRowSelection(({[workflowToDelete]: _removed, ...rest}) => rest);
       void mutate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete workflow');

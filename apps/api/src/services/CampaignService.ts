@@ -216,7 +216,11 @@ export class CampaignService {
         include: {
           segment: true,
         },
-        orderBy: {[sort.field]: sort.direction} as Prisma.CampaignOrderByWithRelationInput,
+        orderBy: [
+          {[sort.field]: sort.direction} as Prisma.CampaignOrderByWithRelationInput,
+          // Tie-breaker — see the note in TemplateService.list.
+          {id: 'asc'},
+        ],
         skip,
         take: pageSize,
       }),

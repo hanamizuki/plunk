@@ -119,6 +119,10 @@ export default function TemplatesPage() {
     try {
       await network.fetch('DELETE', `/templates/${templateToDelete}`);
       toast.success('Template deleted successfully');
+      // Drop the row from the selection too. Selection is keyed by id, so a
+      // deleted-but-still-selected row would be sent to /bulk-update, whose
+      // ownership check rejects the whole request for one missing id.
+      setRowSelection(({[templateToDelete]: _removed, ...rest}) => rest);
       void mutate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete template');

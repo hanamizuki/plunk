@@ -180,6 +180,8 @@ export default function CampaignsPage() {
     try {
       await network.fetch('DELETE', `/campaigns/${campaignToDelete}`);
       toast.success('Campaign deleted successfully');
+      // Drop the row from the selection too — see the note in the templates list.
+      setRowSelection(({[campaignToDelete]: _removed, ...rest}) => rest);
       void mutate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete campaign');

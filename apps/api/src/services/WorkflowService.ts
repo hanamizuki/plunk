@@ -45,10 +45,14 @@ export class WorkflowService {
     // The `steps` column sorts by the related step count, which Prisma expresses
     // as `orderBy: {steps: {_count}}` rather than a scalar field. Every other
     // sortable field (name/createdAt/updatedAt) maps straight onto the scalar.
-    const orderBy: Prisma.WorkflowOrderByWithRelationInput =
+    const orderBy: Prisma.WorkflowOrderByWithRelationInput[] = [
       sort.field === 'steps'
         ? {steps: {_count: sort.direction}}
-        : ({[sort.field]: sort.direction} as Prisma.WorkflowOrderByWithRelationInput);
+        : ({[sort.field]: sort.direction} as Prisma.WorkflowOrderByWithRelationInput),
+      // Tie-breaker — see the note in TemplateService.list. Step counts tie
+      // especially often, so this matters most on the `steps` sort.
+      {id: 'asc'},
+    ];
 
     const [workflows, total] = await Promise.all([
       prisma.workflow.findMany({
