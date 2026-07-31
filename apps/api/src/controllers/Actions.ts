@@ -1,5 +1,5 @@
 import {Controller, Middleware, Post} from '@overnightjs/core';
-import {ActionSchemas} from '@plunk/shared';
+import {ActionSchemas, renderTemplate} from '@plunk/shared';
 import type {NextFunction, Request, Response} from 'express';
 import {requirePublicKey, requireSecretKey} from '../middleware/auth.js';
 import {prisma} from '../database/prisma.js';
@@ -288,32 +288,15 @@ export class Actions {
         manageUrl: `${DASHBOARD_URI}/manage/${contact.id}`,
       };
 
-      // Render template with contact data
-      // Simple template variable replacement: {{fieldname}}
-      let renderedSubject = emailSubject!;
-      let renderedBody = emailBody!;
-
-      for (const [key, value] of Object.entries(dataWithSystemVars)) {
-        const placeholder = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
-        const fallbackPlaceholder = new RegExp(`\\{\\{\\s*${key}\\s*\\?\\?\\s*([^}]+)\\}\\}`, 'g');
-
-        // Replace with value
-        const stringValue = value !== null && value !== undefined ? String(value) : '';
-        renderedSubject = renderedSubject!.replace(placeholder, stringValue);
-        renderedBody = renderedBody!.replace(placeholder, stringValue);
-
-        // Handle fallback syntax: {{field ?? default}}
-        renderedSubject = renderedSubject!.replace(fallbackPlaceholder, stringValue || '$1');
-        renderedBody = renderedBody!.replace(fallbackPlaceholder, stringValue || '$1');
-      }
-
-      // Replace any remaining placeholders with empty string or fallback value
-      renderedSubject = renderedSubject!.replace(/\{\{\s*(\w+)\s*\}\}/g, '');
-      renderedBody = renderedBody!.replace(/\{\{\s*(\w+)\s*\}\}/g, '');
-
-      // Handle fallback placeholders that weren't matched
-      renderedSubject = renderedSubject!.replace(/\{\{\s*\w+\s*\?\?\s*([^}]+)\}\}/g, '$1');
-      renderedBody = renderedBody!.replace(/\{\{\s*\w+\s*\?\?\s*([^}]+)\}\}/g, '$1');
+      // Render via the shared template renderer instead of a local replacement
+      // loop, so this path gets the same semantics as every other send path:
+      // {{field}} / {{field ?? default}} / {{data.field}} lookups, blank-string
+      // fallback, and — crucially — HTML escaping of substituted values in the
+      // body. The body rendered here is stored and later passed through
+      // EmailService.format with no {{...}} left, so escaping must happen now.
+      // Subject stays unescaped: it is a plain-text MIME header, not HTML.
+      const renderedSubject = renderTemplate(emailSubject!, dataWithSystemVars);
+      const renderedBody = renderTemplate(emailBody!, dataWithSystemVars, {escapeHtml: true});
 
       const email = await EmailService.sendTransactionalEmail({
         projectId: auth.projectId,

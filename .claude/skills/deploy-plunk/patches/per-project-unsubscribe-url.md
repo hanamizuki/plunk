@@ -118,12 +118,12 @@ DASHBOARD_DOMAIN: "plunk.hanamizuki.tw mail.mojoapp.ai mail.ethtaipei.org mail.h
 ## Caddy CORS 設定（關鍵）
 
 Express API 的 CORS middleware 只允許 `DASHBOARD_URI` origin。其他退訂 domain 從瀏覽器
-呼叫 `api.mail.mojoapp.ai` 會被 Express CORS reject。
+呼叫 API 會被 Express CORS reject。
 
 解法：**Caddy 統一管 CORS** — strip Express 的 CORS header，加上自己的（接受所有 origin）：
 
 ```
-api.mail.mojoapp.ai {
+api.plunk.hanamizuki.tw, api.mail.mojoapp.ai {
     @preflight {
         method OPTIONS
     }
@@ -188,6 +188,8 @@ cookie 和 API 呼叫都走同 origin）。其他退訂 domain 可以顯示退�
 
 ```yaml
 # docker-compose.yml (app.environment)
+API_DOMAIN: api.plunk.hanamizuki.tw
+API_URI: "https://api.plunk.hanamizuki.tw"
 DASHBOARD_URI: "https://plunk.hanamizuki.tw"
 DASHBOARD_DOMAIN: "plunk.hanamizuki.tw mail.mojoapp.ai mail.ethtaipei.org mail.hanamizuki.tw"
 CUSTOM_UNSUBSCRIBE_URLS: '{ "16e32c0f-b9af-4f72-bfe9-1e3988fc36b6": "https://mail.ethtaipei.org", "7d28d341-0438-4ef7-8ffb-f40304e3bcda": "https://mail.hanamizuki.tw", "294d807b-747e-49ba-aeba-7d2cd7a66275": "https://mail.mojoapp.ai", "04bc2f1b-3c14-444d-9f0b-c5cbc69db8b8": "https://mail.mojoapp.ai" }'
