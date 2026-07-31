@@ -76,9 +76,12 @@ ssh -i ~/.secrets/aws-ec2/hana-prod.pem ubuntu@13.193.173.27 \
 ```bash
 ssh -i ~/.secrets/aws-ec2/hana-prod.pem ubuntu@13.193.173.27 \
   "docker ps --format '{{.Names}} {{.Image}} {{.Status}}' | grep mojo-plunk-app"
-curl -s -o /dev/null -w '%{http_code}\n' https://api.plunk.hanamizuki.tw/templates
-curl -s -o /dev/null -w '%{http_code}\n' https://plunk.hanamizuki.tw/
+curl -s -o /dev/null -w '%{http_code}\n' https://api.plunk.hanamizuki.tw/templates   # 401 = 正常（endpoint 要 auth，有回 401 表示 API 活著；帶 secret key 則 200）
+curl -s -o /dev/null -w '%{http_code}\n' https://plunk.hanamizuki.tw/                # 200
 ```
+
+寄信類驗證需帶 `from`：mojo project 的寄件 domain 是 `mojoapp.ai`（例 `hello@mojoapp.ai`）；
+`mail.mojoapp.ai` 只是退訂 domain，**不是** verified sender，用它會 403。
 
 ## 回滾（換回官方版）
 
