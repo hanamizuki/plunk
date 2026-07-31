@@ -248,9 +248,9 @@ export function coerceCustomValue(value: string): string | boolean | number {
     const parsed = Number(trimmed);
     // Integers beyond Number.MAX_SAFE_INTEGER (e.g. an 18+ digit order/ID
     // string) silently lose precision in a plain `Number()` conversion and
-    // can't be recovered — keep those as strings. Decimals are unaffected:
-    // NUMERIC_RE only allows well-formed literals, so `Number()` on the
-    // matched decimal part never loses precision (only reformats, e.g. "1.0" -> 1).
+    // can't be recovered — keep those as strings. Decimals keep upstream's
+    // existing behaviour (they are always converted, so "1.0" -> 1); an
+    // extreme-precision decimal is still rounded to the nearest double.
     const isInteger = !trimmed.includes('.');
     if (!isInteger || Number.isSafeInteger(parsed)) {
       return parsed;
