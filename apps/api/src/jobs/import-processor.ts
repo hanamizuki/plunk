@@ -123,7 +123,11 @@ export function createImportWorker() {
 
               // Extract custom data (all fields except email and subscribed)
               const {email: _, subscribed: __, ...customData} = record;
-              const data = Object.keys(customData).length > 0 ? customData : undefined;
+              const customEntries = Object.entries(customData);
+              const data =
+                customEntries.length > 0
+                  ? Object.fromEntries(customEntries.map(([k, v]) => [k, coerceCustomValue(v)]))
+                  : undefined;
 
               // Check if contact exists before upserting
               const existingContact = await ContactService.findByEmail(projectId, email);
@@ -215,4 +219,42 @@ export function createImportWorker() {
 function isValidEmail(email: string): boolean {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
+}
+
+// Values considered as boolean during import.
+// Numbers (0, 1) are intentionally absent.
+const BOOLEAN_TRUE = new Set(['true', 'yes']);
+const BOOLEAN_FALSE = new Set(['false', 'no']);
+
+// Strict integer-or-decimal number detection pattern.
+// Valid: 0, 42, -42, 3.14
+// Rejected: 007, +42, 1.2.3, 1e5
+const NUMERIC_RE = /^-?(0|[1-9]\d*)(\.\d+)?$/;
+
+/**
+ * Coerces a raw string into its most natural primitive type: `boolean`,
+ * `number`, or `string`. Values that match neither are
+ * returned unchanged.
+ *
+ * @param value The raw string to coerce.
+ * @returns The coerced value as `boolean`, `number`, or `string`.
+ */
+export function coerceCustomValue(value: string): string | boolean | number {
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if (BOOLEAN_TRUE.has(lower)) return true;
+  if (BOOLEAN_FALSE.has(lower)) return false;
+  if (NUMERIC_RE.test(trimmed)) {
+    const parsed = Number(trimmed);
+    // Integers beyond Number.MAX_SAFE_INTEGER (e.g. an 18+ digit order/ID
+    // string) silently lose precision in a plain `Number()` conversion and
+    // can't be recovered — keep those as strings. Decimals keep upstream's
+    // existing behaviour (they are always converted, so "1.0" -> 1); an
+    // extreme-precision decimal is still rounded to the nearest double.
+    const isInteger = !trimmed.includes('.');
+    if (!isInteger || Number.isSafeInteger(parsed)) {
+      return parsed;
+    }
+  }
+  return value;
 }

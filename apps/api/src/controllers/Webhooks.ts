@@ -573,6 +573,16 @@ export class Webhooks {
 
           signale.success(`[WEBHOOK] Invoice paid for project ${project.name} (${project.id})`);
 
+          // Re-enable the project only if it was previously disabled for a failed payment.
+          // Projects disabled for other reasons (reputation, phishing, manual) must stay disabled.
+          if (project.disabled && project.disabledReason === 'PAYMENT_FAILED') {
+            await prisma.project.update({
+              where: {id: project.id},
+              data: {disabled: false, disabledReason: null},
+            });
+            signale.success(`[WEBHOOK] Project ${project.name} (${project.id}) re-enabled after payment`);
+          }
+
           // Send notification about invoice payment
           await NtfyService.notifyInvoicePaid(project.name, project.id);
           break;
@@ -606,7 +616,15 @@ export class Webhooks {
 
           await prisma.project.update({
             where: {id: project.id},
-            data: {disabled: true},
+            data: {
+              disabled: true,
+              // Only stamp the reason when this event is what disables the project.
+              // An already-disabled project keeps whatever reason it had, including a
+              // NULL one — projects suspended before the disabledReason column existed
+              // were never backfilled, and treating NULL as "no reason on record" would
+              // let a later invoice.paid lift a manual or security suspension.
+              ...(project.disabled ? {} : {disabledReason: 'PAYMENT_FAILED'}),
+            },
           });
 
           await NtfyService.notifyProjectDisabledForPayment(project.name, project.id);

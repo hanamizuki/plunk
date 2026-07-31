@@ -65,6 +65,18 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Tune Postgres for ephemeral CI workload
+        env:
+          PGPASSWORD: postgres
+        run: |
+          # synchronous_commit=off is the biggest single I/O win and is safe to lose
+          # data on crash for a throwaway CI database.
+          # synchronous_commit is dynamic — applies on reload. max_connections would
+          # require a restart, so we leave it at the default of 100 and cap workers
+          # at 4 × connection_limit=20 = 80 to stay under that budget.
+          psql -h localhost -U postgres -d plunk_test -c "ALTER SYSTEM SET synchronous_commit = 'off';"
+          psql -h localhost -U postgres -d plunk_test -c "SELECT pg_reload_conf();"
+
       - name: Setup environment variables
         run: |
           cat > .env << EOF

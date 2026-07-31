@@ -1,0 +1,102 @@
+---
+title: Double opt-in
+description: Require a confirmation click before a new signup starts receiving marketing email
+icon: MailCheck
+---
+
+Double opt-in adds a confirmation step between "user signs up" and "user starts getting marketing email." It's the standard way to avoid mailing typoed addresses, role accounts, and anyone who didn't actually consent.
+
+The trick is `{{subscribeUrl}}`: a per-contact link Plunk auto-injects into every send. Clicking it flips `subscribed` to `true` and fires a `contact.subscribed` event.
+
+## Setup
+
+import {Step, Steps} from 'fumadocs-ui/components/steps';
+
+<Steps>
+
+<Step>
+
+### Create two templates
+
+- A **Transactional** template for the confirmation email, containing `{{subscribeUrl}}`:
+
+  ```html
+  <p>Hi {{firstName}}, please confirm your email to start receiving updates:</p>
+  <p><a href="{{subscribeUrl}}">Confirm my email</a></p>
+  ```
+
+- A **Marketing** template for the welcome email that goes out *after* they confirm.
+
+<Callout title="The confirmation must be transactional" type="warn">
+  A marketing template targeted at an unsubscribed contact is [silently skipped](/concepts/contacts#emails-by-subscription-state). Use a transactional template for the confirmation specifically — it bypasses the subscription check.
+</Callout>
+
+</Step>
+
+<Step>
+
+### Trigger the signup from your backend
+
+Two calls with your secret key (`sk_*`): create the contact unsubscribed, then track the event that fires the confirmation workflow.
+
+```bash
+curl https://next-api.useplunk.com/contacts \
+  -H "Authorization: Bearer sk_your_secret_key" \
+  -d '{ "email": "ada@example.com", "subscribed": false, "data": { "firstName": "Ada" } }'
+
+curl https://next-api.useplunk.com/v1/track \
+  -H "Authorization: Bearer sk_your_secret_key" \
+  -d '{ "event": "signup.pending", "email": "ada@example.com", "subscribed": false }'
+```
+
+Both calls pass `subscribed: false`. If you skip the first call and rely on `/v1/track` alone, tracking on an unknown email creates the contact — but defaults it to subscribed, which defeats the point.
+
+</Step>
+
+<Step>
+
+### Workflow A: send the confirmation
+
+**Workflows → New workflow**:
+
+- **Trigger**: `EVENT` on `signup.pending`
+- `SEND_EMAIL` step → transactional confirmation template
+
+Enable it.
+
+</Step>
+
+<Step>
+
+### Workflow B: welcome them after confirmation
+
+**Workflows → New workflow**:
+
+- **Trigger**: `EVENT` on `contact.subscribed`
+- `SEND_EMAIL` step → marketing welcome template
+
+Enable it. `contact.subscribed` fires whenever a contact opts in — including via `{{subscribeUrl}}`, the preferences page, or the API — so this workflow handles both first-time confirmations and resubscribes.
+
+</Step>
+
+</Steps>
+
+## Reminder if they don't confirm
+
+Extend Workflow A with a `WAIT_FOR_EVENT` step after the send:
+
+- **Event**: `contact.subscribed`
+- **Timeout**: `86400` (24 hours)
+
+On timeout, send a single reminder (also transactional). Keep the number of reminders small — repeated confirmation prompts look like spam to mailbox providers as much as to recipients.
+
+## What's next
+
+<Cards>
+  <Card title="Unsubscribe & preferences pages" href="/guides/unsubscribe-pages">
+    Detail on `{{subscribeUrl}}` and the hosted pages.
+  </Card>
+  <Card title="Templates" href="/concepts/templates">
+    The difference between Marketing, Transactional, and Headless templates.
+  </Card>
+</Cards>

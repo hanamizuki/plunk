@@ -84,6 +84,53 @@ After the trigger, add a **Webhook** step and configure it:
 }
 ```
 
+- **Body** (optional): Custom request body. When omitted, Plunk sends the [default payload](#webhook-payload) shown below. When provided, the value replaces the default payload entirely and is JSON-encoded before being sent.
+
+</Step>
+
+<Step>
+
+### Use variables in the request (optional)
+
+The `url`, header values, and `body` all support `{{variable}}` interpolation. The available scope is the same as `SEND_EMAIL` templates, plus a webhook-only `event` namespace exposing the trigger event payload:
+
+| Variable                                                  | Value                                                                       |
+| --------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `{{id}}`, `{{email}}`                                     | The contact's ID and email.                                                 |
+| `{{<key>}}` (top-level)                                   | Any key from the contact's `data` JSON (e.g. `{{firstName}}`, `{{plan}}`).  |
+| `{{data.<key>}}`                                          | The same contact data, addressed via the `data` namespace.                  |
+| `{{event.<key>}}`                                         | Webhook-only. Fields from the trigger event payload (e.g. `{{event.subject}}`). |
+| `{{<key>}}` (from execution context)                      | Keys passed in as `context` when starting a `MANUAL` execution.             |
+| `{{unsubscribeUrl}}`, `{{subscribeUrl}}`, `{{manageUrl}}` | Per-contact subscription management URLs.                                   |
+
+The HTTP `method` is **not** templated — it must be a literal verb (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`). The `url` must include a static scheme (`http://` or `https://`); placeholders are supported inside the URL but cannot replace the scheme.
+
+Example — forward a contact event to your own API, parameterised by contact data:
+
+**URL**
+
+```text
+https://api.example.com/users/{{id}}/events
+```
+
+**Headers**
+
+```json
+{
+  "Authorization": "Bearer your-secret-token"
+}
+```
+
+**Body**
+
+```json
+{
+  "email": "{{email}}",
+  "plan": "{{plan}}",
+  "referrer": "{{event.referrer}}"
+}
+```
+
 </Step>
 
 <Step>

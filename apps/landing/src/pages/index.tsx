@@ -725,6 +725,7 @@ export default function Index() {
                   viewport={{once: true}}
                   transition={{duration: 0.8, delay: 0.9, ease: [0.22, 1, 0.36, 1]}}
                   className={'mx-auto max-w-xl'}
+                  data-nosnippet
                 >
                   <div className={'overflow-hidden rounded-[20px] border border-neutral-200 bg-white'}>
                     <div className={'flex items-center gap-5 p-6'}>

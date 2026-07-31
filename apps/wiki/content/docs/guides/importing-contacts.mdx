@@ -37,6 +37,8 @@ In this example, every imported contact ends up with `data.firstName`, `data.pla
 - **Email column**: must be present and valid. Rows with missing or invalid emails are reported back as errors.
 - **Reserved column names**: `id`, `subscribed`, `createdAt`, `updatedAt`, and the auto-generated URL variables (`unsubscribeUrl`, etc.) are silently filtered out. Don't include them as columns.
 - **Date columns**: use ISO 8601 (`2026-05-06T12:00:00Z`) so they're typed as dates and become usable with `within` / `olderThan` segment operators.
+- **Boolean columns**: `true`, `false`, `yes`, `no` (case-insensitive) are stored as booleans and get the boolean toggle in segment filters.
+- **Numeric columns**: plain integers and decimals (`42`, `3.14`) are stored as numbers and become usable with `gt` / `lt` segment operators. Leading-zero values (`01234`), `+`-prefixed numbers, and scientific notation stay strings so IDs, zip codes, and phone numbers aren't corrupted.
 - **Existing contacts**: if a row's email matches an existing contact, the import **updates** the contact (merging the CSV's columns into `data`). It doesn't create a duplicate or overwrite the whole record.
 
 ## Importing your CSV

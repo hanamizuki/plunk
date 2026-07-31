@@ -1,0 +1,19 @@
+---
+title: Recipes
+description: End-to-end walkthroughs for common patterns built on Plunk events and workflows
+icon: ChefHat
+---
+
+Recipes are concrete, step-by-step builds for patterns we see most often in Plunk projects. Each one assumes you already understand the underlying [concepts](/concepts/workflows) and walks you through the exact API calls, workflow steps, and template variables involved.
+
+<Cards>
+  <Card title="Waitlist with confirmation email" href="/recipes/waitlist">
+    Capture signups with a single tracked event, then automatically email each person who joins.
+  </Card>
+  <Card title="Sync unsubscribes to your database" href="/recipes/sync-unsubscribes">
+    Keep your own user table in step with Plunk's subscription state using a webhook step.
+  </Card>
+  <Card title="Double opt-in" href="/recipes/double-opt-in">
+    Add a confirmation step before a contact starts receiving marketing email, using `{{subscribeUrl}}`.
+  </Card>
+</Cards>

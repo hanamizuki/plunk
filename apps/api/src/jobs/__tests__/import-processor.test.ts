@@ -1,6 +1,7 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 import {ContactService} from '../../services/ContactService.js';
+import {coerceCustomValue} from '../import-processor.js';
 
 /**
  * Tests for Contact Import Processor - Subscription Status Preservation
@@ -276,6 +277,54 @@ describe('Contact Import - Subscription Status Preservation', () => {
       expect(data?.plan).toBe('pro'); // Preserved
       expect(data?.lastName).toBe('Doe'); // New
       expect(data?.company).toBe('Acme Inc'); // New
+    });
+  });
+});
+
+describe('coerceCustomValue', () => {
+  describe('boolean coercion', () => {
+    it.each(['true', 'TRUE', 'True', ' true ', 'yes', 'YES', 'Yes'])('coerces %j to true', value => {
+      expect(coerceCustomValue(value)).toBe(true);
+    });
+
+    it.each(['false', 'FALSE', 'False', ' false ', 'no', 'NO', 'No'])('coerces %j to false', value => {
+      expect(coerceCustomValue(value)).toBe(false);
+    });
+  });
+
+  describe('number coercion', () => {
+    it.each([
+      ['42', 42],
+      ['-7', -7],
+      ['3.14', 3.14],
+      [' 42 ', 42],
+      ['0.5', 0.5],
+      ['-0.25', -0.25],
+      ['0', 0],
+      ['1', 1],
+    ])('coerces %j to %j', (value, expected) => {
+      expect(coerceCustomValue(value)).toBe(expected);
+    });
+
+    it.each(['01234', '+42', '.5', '42.', '1e10', 'NaN', 'Infinity', '1.2.3', '4-2'])(
+      'leaves %j as a string (preserves IDs / rejects loose formats)',
+      value => {
+        expect(coerceCustomValue(value)).toBe(value);
+      },
+    );
+
+    it('"1.0" is a number (does not match the boolean truthy set)', () => {
+      expect(coerceCustomValue('1.0')).toBe(1);
+    });
+  });
+
+  describe('passthrough', () => {
+    it.each(['Alice', 'true!', 'yesno', 'maybe'])('leaves %j as a string', value => {
+      expect(coerceCustomValue(value)).toBe(value);
+    });
+
+    it('leaves empty string as empty string', () => {
+      expect(coerceCustomValue('')).toBe('');
     });
   });
 });

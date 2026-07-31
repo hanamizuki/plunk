@@ -50,27 +50,20 @@ describe('SecurityService', () => {
     const complainedCount = opts?.complainedCount ?? 0;
     const createdAt = opts?.createdAt ?? new Date();
 
-    const emails = [];
-    for (let i = 0; i < count; i++) {
-      emails.push(
-        prisma.email.create({
-          data: {
-            projectId,
-            contactId,
-            subject: `Test ${i}`,
-            body: '<p>test</p>',
-            from: 'test@example.com',
-            status: EmailStatus.SENT,
-            sourceType: EmailSourceType.TRANSACTIONAL,
-            sentAt: createdAt,
-            createdAt,
-            bouncedAt: i < bouncedCount ? createdAt : null,
-            complainedAt: i >= bouncedCount && i < bouncedCount + complainedCount ? createdAt : null,
-          },
-        }),
-      );
-    }
-    await Promise.all(emails);
+    const data = Array.from({length: count}, (_, i) => ({
+      projectId,
+      contactId,
+      subject: `Test ${i}`,
+      body: '<p>test</p>',
+      from: 'test@example.com',
+      status: EmailStatus.SENT,
+      sourceType: EmailSourceType.TRANSACTIONAL,
+      sentAt: createdAt,
+      createdAt,
+      bouncedAt: i < bouncedCount ? createdAt : null,
+      complainedAt: i >= bouncedCount && i < bouncedCount + complainedCount ? createdAt : null,
+    }));
+    await prisma.email.createMany({data});
   }
 
   describe('Rate-based checks (existing behavior)', () => {
@@ -109,14 +102,12 @@ describe('SecurityService', () => {
       await createEmails(50, {bouncedCount: 10});
 
       const status = await SecurityService.getSecurityStatus(projectId);
-      // Rate-based check doesn't trigger, but absolute count ceiling might
-      // With 10 bounces in 24h, this is below the 50-bounce ceiling for established projects
       expect(status.violations).toHaveLength(0);
     });
   });
 
-  describe('Absolute count ceilings (established projects)', () => {
-    // Age the project past the new-project window so standard ceilings apply
+  describe('Established projects skip absolute ceilings', () => {
+    // Age the project past the new-project window
     beforeEach(async () => {
       const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
       await prisma.project.update({
@@ -125,44 +116,26 @@ describe('SecurityService', () => {
       });
     });
 
-    it('should trigger critical when 24-hour bounce count exceeds ceiling', async () => {
-      // 20,000 emails, 101 bounces = 0.5% rate (well below rate threshold)
-      // But 101 bounces > 100 (24h critical ceiling for established projects)
-      await createEmails(20000, {bouncedCount: 101});
-
-      const status = await SecurityService.getSecurityStatus(projectId);
-      expect(status.shouldDisable).toBe(true);
-      expect(status.violations.some(v => v.includes('24-hour bounce count'))).toBe(true);
-    });
-
-    it('should trigger warning when 24-hour bounce count exceeds warning ceiling', async () => {
-      // 10,000 emails, 51 bounces = 0.51% (below rate threshold)
-      // But 51 > 50 (24h warning ceiling), below 100 critical
-      await createEmails(10000, {bouncedCount: 51});
-
-      const status = await SecurityService.getSecurityStatus(projectId);
-      expect(status.isHealthy).toBe(true); // warnings don't make it unhealthy
-      expect(status.warnings.some(w => w.includes('24-hour bounce count'))).toBe(true);
-    });
-
-    it('should trigger critical when 24-hour complaint count exceeds ceiling', async () => {
-      // 20,000 emails, 26 complaints = 0.13% (below complaint rate critical of 0.15%)
-      // But 26 > 25 (24h complaint critical ceiling)
-      await createEmails(20000, {complainedCount: 26});
-
-      const status = await SecurityService.getSecurityStatus(projectId);
-      expect(status.shouldDisable).toBe(true);
-      expect(status.violations.some(v => v.includes('24-hour complaint count'))).toBe(true);
-    });
-
-    it('should NOT trigger ceiling when bounce count is below ceiling', async () => {
-      // 20,000 emails, 40 bounces = below 50 warning ceiling for established projects
-      await createEmails(20000, {bouncedCount: 40});
+    it('should NOT trigger on high absolute bounce count when rate is healthy', async () => {
+      // 20,000 emails, 200 bounces = 1% rate (well below rate threshold)
+      // Established projects rely solely on rates — high absolute counts at
+      // high volume don't indicate abuse.
+      await createEmails(20000, {bouncedCount: 200});
 
       const status = await SecurityService.getSecurityStatus(projectId);
       expect(status.isHealthy).toBe(true);
+      expect(status.shouldDisable).toBe(false);
       expect(status.violations).toHaveLength(0);
       expect(status.warnings).toHaveLength(0);
+    });
+
+    it('should NOT trigger on high absolute complaint count when rate is healthy', async () => {
+      // 100,000 emails, 30 complaints = 0.03% (at warning floor, below critical 0.15%)
+      // Old absolute ceiling (25 complaints in 7d critical) would have tripped.
+      await createEmails(100000, {complainedCount: 30});
+
+      const status = await SecurityService.getSecurityStatus(projectId);
+      expect(status.shouldDisable).toBe(false);
     });
   });
 
@@ -178,7 +151,7 @@ describe('SecurityService', () => {
       expect(status.violations.some(v => v.includes('new project'))).toBe(true);
     });
 
-    it('should apply standard ceilings for projects over 30 days old', async () => {
+    it('should NOT apply absolute ceilings for projects over 30 days old', async () => {
       // Age the project to 31 days
       const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
       await prisma.project.update({
@@ -186,15 +159,14 @@ describe('SecurityService', () => {
         data: {createdAt: oldDate},
       });
 
-      // 10,000 emails, 26 bounces (above 25 new project ceiling, below 50 standard warning ceiling)
+      // 10,000 emails, 26 bounces — would trip new-project ceiling, but
+      // established projects skip ceilings entirely (rate is 0.26%, healthy).
       await createEmails(10000, {bouncedCount: 26});
 
       const status = await SecurityService.getSecurityStatus(projectId);
       expect(status.isNewProject).toBe(false);
-      // 26 is below the 50-bounce 24h warning ceiling for established projects
-      expect(status.warnings.some(w => w.includes('24-hour bounce count'))).toBe(false);
-      // And below the 100-bounce 24h critical ceiling
-      expect(status.violations.some(v => v.includes('24-hour bounce count'))).toBe(false);
+      expect(status.warnings.some(w => w.includes('bounce count'))).toBe(false);
+      expect(status.violations.some(v => v.includes('bounce count'))).toBe(false);
     });
 
     it('should catch new project blasting emails with delayed bounces', async () => {
@@ -212,8 +184,8 @@ describe('SecurityService', () => {
 
   describe('checkAndEnforceSecurityLimits', () => {
     it('should disable project when critical thresholds are exceeded', async () => {
-      // Create enough bounces to trigger critical
-      await createEmails(20000, {bouncedCount: 101});
+      // New project, 20K emails with 30 bounces — exceeds new project 24h critical ceiling
+      await createEmails(20000, {bouncedCount: 30});
 
       await SecurityService.checkAndEnforceSecurityLimits(projectId);
 
@@ -225,13 +197,13 @@ describe('SecurityService', () => {
     });
 
     it('should NOT disable project when only warnings exist', async () => {
-      // 10,000 emails, 51 bounces (above warning but below critical for established project)
+      // Established project, 200 emails, 12 bounces = 6% (above 5% warning, below 10% critical)
       const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
       await prisma.project.update({
         where: {id: projectId},
         data: {createdAt: oldDate},
       });
-      await createEmails(10000, {bouncedCount: 51});
+      await createEmails(200, {bouncedCount: 12});
 
       await SecurityService.checkAndEnforceSecurityLimits(projectId);
 

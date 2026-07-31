@@ -22,11 +22,23 @@ describe('renderTemplate', () => {
     expect(renderTemplate('Hi {{firstName}}', {data: {firstName: 'Ada'}})).toBe('Hi Ada');
   });
 
-  it('renders numbers, including 0 via the data object', () => {
-    // Send paths pass contact data both spread at top level and under `data`;
-    // the `||` lookup chain drops a top-level 0, the data lookup catches it
+  it('renders numbers, including a top-level 0', () => {
+    // Send paths pass contact data both spread at top level and under `data`
     expect(renderTemplate('{{bonus_days}} days', {bonus_days: 0, data: {bonus_days: 0}})).toBe('0 days');
+    expect(renderTemplate('{{bonus_days}} days', {bonus_days: 0})).toBe('0 days');
     expect(renderTemplate('{{bonus_days}} days', {bonus_days: 7})).toBe('7 days');
+  });
+
+  it('keeps falsy values resolved through a dotted path', () => {
+    // Only the nested lookup can match a dotted key, so a falsy value here has
+    // no fallback — it must survive the lookup chain rather than render empty.
+    // Webhook bodies (`{{event.count}}`, `{{data.active}}`) depend on this, and
+    // CSV import now stores real booleans/numbers instead of strings.
+    expect(renderTemplate('{{data.active}}', {data: {active: false}})).toBe('false');
+    expect(renderTemplate('{{event.count}}', {event: {count: 0}})).toBe('0');
+    expect(renderTemplate('{{data.active ?? unknown}}', {data: {active: false}})).toBe('false');
+    // A genuinely missing path still falls back to the default
+    expect(renderTemplate('{{data.missing ?? none}}', {data: {}})).toBe('none');
   });
 
   describe('without escapeHtml (plain-text contexts like subjects)', () => {
@@ -34,8 +46,9 @@ describe('renderTemplate', () => {
       expect(renderTemplate('Hi {{name}}', {name: '<b>Ada & Eve</b>'})).toBe('Hi <b>Ada & Eve</b>');
     });
 
-    it('wraps array values in <li> without escaping elements', () => {
-      expect(renderTemplate('<ul>{{items}}</ul>', {items: ['a', 'b']})).toBe('<ul><li>a</li>\n<li>b</li></ul>');
+    it('joins array values with ", " — no <li> markup or newlines', () => {
+      // Newlines would make undici reject the value as a webhook header
+      expect(renderTemplate('Tags: {{items}}', {items: ['a', 'b']})).toBe('Tags: a, b');
     });
   });
 
@@ -86,9 +99,9 @@ describe('renderTemplate', () => {
 
   describe('?? default with empty-string values', () => {
     // Send paths pass contact data both spread at top level and under `data`
-    // (the production shape). A top-level-only '' is dropped by the || lookup
-    // chain and falls back via `??` alone; the data-object '' is returned
-    // verbatim by the third lookup and needs the blank-string branch.
+    // (the production shape). The lookup chain is `??`, so an empty string is
+    // returned verbatim by the first matching lookup and the blank-string
+    // branch is what applies the default.
     it('falls back to the default for empty strings (production shape)', () => {
       expect(renderTemplate('嗨 {{display_name ?? 朋友}}，', {display_name: '', data: {display_name: ''}})).toBe(
         '嗨 朋友，',

@@ -438,15 +438,14 @@ export class DomainService {
    * @param userId User ID to check membership
    * @returns Object with exists flag and membership info
    */
-  public static async checkDomainOwnership(domain: string, userId: string) {
+  public static async checkDomainOwnership(domain: string, userId?: string) {
     const existingDomain = await prisma.domain.findFirst({
       where: {domain},
       include: {
         project: {
-          include: {
-            members: {
-              where: {userId},
-            },
+          select: {
+            id: true,
+            name: true,
           },
         },
       },
@@ -456,8 +455,20 @@ export class DomainService {
       return {exists: false};
     }
 
-    // Check if user is a member of the project that owns this domain
-    const isMember = existingDomain.project.members.length > 0;
+    let isMember = false;
+
+    if (userId) {
+      const membership = await prisma.membership.findUnique({
+        where: {
+          userId_projectId: {
+            userId,
+            projectId: existingDomain.project.id,
+          },
+        },
+      });
+
+      isMember = membership !== null;
+    }
 
     return {
       exists: true,
