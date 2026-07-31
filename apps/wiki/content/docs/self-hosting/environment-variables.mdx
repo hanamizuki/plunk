@@ -36,6 +36,7 @@ Set your subdomains here. The application automatically derives all internal and
 | `AWS_SES_SECRET_ACCESS_KEY`         | Yes      | AWS secret access key for SES.                                                                                                                   | `wJalr...`                                      |
 | `SES_CONFIGURATION_SET`             | No       | SES configuration set name used for open/click tracking.                                                                                         | `plunk-configuration-set` (default)             |
 | `SES_CONFIGURATION_SET_NO_TRACKING` | No       | A second SES configuration set without tracking. When set, projects can toggle email tracking on/off. If omitted, the tracking toggle is hidden. | `plunk-no-tracking-configuration-set` (default) |
+| `MAIL_FROM_SUBDOMAIN`               | No       | Subdomain prefix used when constructing the MAIL FROM hostname for a verified domain (e.g. with default `plunk` and domain `yourdomain.com`, the MAIL FROM is `plunk.yourdomain.com`). Override when the default subdomain is already in use (e.g. by an R2/CDN custom domain), since the MAIL FROM hostname needs MX + TXT records that can't coexist with a CNAME. | `plunk`                                         |
 
 ## Storage (Minio)
 
@@ -129,6 +130,16 @@ Plunk bundles a self-hosted [ntfy](https://ntfy.sh) server for internal system n
 | ----------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `AUTO_PROJECT_DISABLE`        | No       | When `true`, projects are automatically suspended when bounce or complaint rate thresholds are exceeded. Set to `false` to manage project status manually. | `true`  |
 | `EMAIL_RATE_LIMIT_PER_SECOND` | No       | Override the email sending rate limit. If not set, Plunk automatically fetches the quota from your AWS SES account.                                        | —       |
+| `EMAIL_WORKER_CONCURRENCY`    | No       | Number of emails the worker processes in parallel. When unset, derived from the effective rate limit so a higher SES quota scales throughput automatically. | —       |
+| `EMAIL_WORKER_MAX_CONCURRENCY`| No       | Upper bound applied to the auto-derived worker concurrency. Raise this only after sizing the Prisma connection pool accordingly.                            | `50`    |
+
+## Advanced
+
+Variables for unusual deployments. The defaults work for the standard Docker Compose setup — only change these if you know you need to.
+
+| Variable     | Required | Description                                                                                                              | Default |
+| ------------ | -------- | ------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `NGINX_PORT` | No       | Host port the bundled Nginx reverse proxy binds to. Override when port 80/443 is already in use on the host (e.g. running behind another reverse proxy that forwards to a different port). | `80`    |
 
 ## Phishing Detection
 

@@ -3,6 +3,20 @@ import type {NextFunction, Request, Response} from 'express';
 import {databaseRequestLogger} from '../requestLogger.js';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 
+async function waitForLog(prisma: ReturnType<typeof getPrismaClient>, id: string, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const record = await prisma.apiRequest.findUnique({where: {id}});
+    if (record) return record;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  return prisma.apiRequest.findUnique({where: {id}});
+}
+
+async function waitForNoLog(ms = 200) {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
 describe('Request Logger Middleware', () => {
   const prisma = getPrismaClient();
   let req: Partial<Request>;
@@ -77,13 +91,7 @@ describe('Request Logger Middleware', () => {
       const responseBody = {success: true, data: {id: '123'}};
       await res.json!(responseBody);
 
-      // Wait for async logging to complete
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Verify database record was created
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-request-id-123'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-request-id-123');
 
       expect(loggedRequest).toBeDefined();
       expect(loggedRequest?.method).toBe('POST');
@@ -109,11 +117,7 @@ describe('Request Logger Middleware', () => {
       const responseBody = {success: true};
       await res.json!(responseBody);
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'public-request-id'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'public-request-id');
 
       expect(loggedRequest).toBeDefined();
       expect(loggedRequest?.projectId).toBeNull();
@@ -131,11 +135,7 @@ describe('Request Logger Middleware', () => {
 
       await res.json!({success: true});
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-request-id-123'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-request-id-123');
 
       // Allow for timer imprecision (especially in CI environments)
       expect(loggedRequest?.duration).toBeGreaterThanOrEqual(45);
@@ -162,11 +162,7 @@ describe('Request Logger Middleware', () => {
 
       await res.json!(errorResponse);
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-request-id-123'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-request-id-123');
 
       expect(loggedRequest).toBeDefined();
       expect(loggedRequest?.statusCode).toBe(400);
@@ -189,11 +185,7 @@ describe('Request Logger Middleware', () => {
 
       await res.json!(errorResponse);
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-request-id-123'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-request-id-123');
 
       expect(loggedRequest?.statusCode).toBe(500);
       expect(loggedRequest?.errorCode).toBe('INTERNAL_SERVER_ERROR');
@@ -209,11 +201,7 @@ describe('Request Logger Middleware', () => {
         error: {code: 'RESOURCE_NOT_FOUND', message: 'Template not found'},
       });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-request-id-123'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-request-id-123');
 
       expect(loggedRequest?.statusCode).toBe(404);
       expect(loggedRequest?.errorCode).toBe('RESOURCE_NOT_FOUND');
@@ -306,11 +294,8 @@ describe('Request Logger Middleware', () => {
 
         databaseRequestLogger(req as Request, res as Response, next);
         await res.json!({success: true});
-        await new Promise(resolve => setTimeout(resolve, 100));
 
-        const loggedRequest = await prisma.apiRequest.findUnique({
-          where: {id: `log-${path.replace(/\//g, '-')}`},
-        });
+        const loggedRequest = await waitForLog(prisma, `log-${path.replace(/\//g, '-')}`);
 
         expect(loggedRequest).toBeDefined();
         expect(loggedRequest?.path).toBe(path);
@@ -352,17 +337,18 @@ describe('Request Logger Middleware', () => {
 
       await res.json!({success: true});
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Should create a record with generated UUID
-      const allRequests = await prisma.apiRequest.findMany({
-        where: {
-          path: '/v1/send',
-          method: 'POST',
-        },
-        orderBy: {createdAt: 'desc'},
-        take: 1,
-      });
+      // Should create a record with generated UUID — poll for it
+      const deadline = Date.now() + 2000;
+      let allRequests: Awaited<ReturnType<typeof prisma.apiRequest.findMany>> = [];
+      while (Date.now() < deadline) {
+        allRequests = await prisma.apiRequest.findMany({
+          where: {path: '/v1/send', method: 'POST'},
+          orderBy: {createdAt: 'desc'},
+          take: 1,
+        });
+        if (allRequests.length > 0) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
 
       expect(allRequests.length).toBeGreaterThan(0);
       expect(allRequests[0].id).toBeDefined();
@@ -418,11 +404,8 @@ describe('Request Logger Middleware', () => {
       databaseRequestLogger(reqWithSize as Request, resWithId as Response, next);
 
       await resWithId.json!({success: true});
-      await new Promise(resolve => setTimeout(resolve, 100));
 
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-size-5000'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-size-5000');
 
       expect(loggedRequest?.requestSize).toBe(5000);
     });
@@ -445,11 +428,8 @@ describe('Request Logger Middleware', () => {
       databaseRequestLogger(reqNoSize as Request, resWithId as Response, next);
 
       await resWithId.json!({success: true});
-      await new Promise(resolve => setTimeout(resolve, 100));
 
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-no-size'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-no-size');
 
       expect(loggedRequest?.requestSize).toBeNull();
     });
@@ -474,11 +454,8 @@ describe('Request Logger Middleware', () => {
       };
 
       await resLarge.json!(largeResponse);
-      await new Promise(resolve => setTimeout(resolve, 100));
 
-      const loggedRequest = await prisma.apiRequest.findUnique({
-        where: {id: 'test-large-response'},
-      });
+      const loggedRequest = await waitForLog(prisma, 'test-large-response');
 
       const expectedSize = JSON.stringify(largeResponse).length;
       expect(loggedRequest?.responseSize).toBe(expectedSize);

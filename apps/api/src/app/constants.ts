@@ -94,6 +94,20 @@ export const EMAIL_RATE_LIMIT_PER_SECOND = process.env.EMAIL_RATE_LIMIT_PER_SECO
   ? Number(process.env.EMAIL_RATE_LIMIT_PER_SECOND)
   : undefined;
 
+// Email Worker Concurrency (optional override)
+// If not set, concurrency is derived from the effective rate limit so a higher
+// SES quota actually translates into higher throughput. Set this to pin a fixed
+// value (useful when Prisma pool size or memory is the binding constraint).
+export const EMAIL_WORKER_CONCURRENCY = process.env.EMAIL_WORKER_CONCURRENCY
+  ? Number(process.env.EMAIL_WORKER_CONCURRENCY)
+  : undefined;
+
+// Upper bound for auto-derived concurrency. Raise this if you have a large SES
+// quota AND have sized the Prisma connection pool accordingly.
+export const EMAIL_WORKER_MAX_CONCURRENCY = process.env.EMAIL_WORKER_MAX_CONCURRENCY
+  ? Number(process.env.EMAIL_WORKER_MAX_CONCURRENCY)
+  : 50;
+
 // Storage
 export const REDIS_URL = validateEnv('REDIS_URL');
 export const DATABASE_URL = validateEnv('DATABASE_URL');

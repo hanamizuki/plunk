@@ -6,3 +6,16 @@
 body {
     font-family: 'Inter', sans-serif;
 }
+
+/*
+ * Two-tone palette: white content, gray chrome.
+ * `--color-fd-background` paints the page (content area + nav).
+ * `--color-fd-card` paints the sidebar (via `bg-fd-card` on `#nd-sidebar`)
+ * and the `<Cards>` component — both read well as soft gray against white.
+ */
+:root {
+    --color-fd-background: hsl(0, 0%, 100%);
+    --color-fd-card: hsl(0, 0%, 96.5%);
+    --color-fd-secondary: hsl(0, 0%, 95%);
+    --color-fd-border: hsla(0, 0%, 80%, 60%);
+}

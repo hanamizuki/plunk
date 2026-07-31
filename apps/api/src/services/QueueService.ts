@@ -1,4 +1,4 @@
-import {CampaignStatus, EmailStatus} from '@plunk/db';
+import {CampaignStatus, EmailSourceType, EmailStatus} from '@plunk/db';
 import {type Job, Queue} from 'bullmq';
 import type {RedisOptions} from 'ioredis';
 import signale from 'signale';
@@ -174,20 +174,43 @@ export const meterQueue = new Queue<MeterEventJobData>('meter', {
   },
 });
 
+function emailPriorityFor(sourceType: EmailSourceType): number {
+  switch (sourceType) {
+    case EmailSourceType.TRANSACTIONAL:
+      return 1;
+    case EmailSourceType.WORKFLOW:
+      return 5;
+    case EmailSourceType.CAMPAIGN:
+      return 10;
+    default:
+      return 5;
+  }
+}
+
 /**
  * Queue Service - Centralized queue management
  */
 export class QueueService {
   /**
-   * Add email to queue for sending
+   * Add email to queue for sending.
+   *
+   * Transactional emails jump the queue ahead of workflow and campaign sends
+   * via BullMQ's priority (lower number = higher precedence). This prevents
+   * latency-sensitive sends (login codes, password resets) from queuing behind
+   * large campaign bursts on the shared `email` queue.
    */
-  public static async queueEmail(emailId: string, delay?: number): Promise<Job<SendEmailJobData>> {
+  public static async queueEmail(
+    emailId: string,
+    sourceType: EmailSourceType,
+    delay?: number,
+  ): Promise<Job<SendEmailJobData>> {
     return emailQueue.add(
       'send-email',
       {emailId},
       {
-        delay, // Optional delay in milliseconds
-        jobId: `email-${emailId}`, // Prevent duplicate jobs
+        delay,
+        jobId: `email-${emailId}`,
+        priority: emailPriorityFor(sourceType),
       },
     );
   }

@@ -108,7 +108,7 @@ export class EmailService {
     await BillingLimitService.incrementUsage(params.projectId, EmailSourceType.TRANSACTIONAL);
 
     // Queue email for sending
-    await this.queueEmail(email.id);
+    await this.queueEmail(email.id, EmailSourceType.TRANSACTIONAL);
 
     return email;
   }
@@ -172,7 +172,7 @@ export class EmailService {
     await BillingLimitService.incrementUsage(params.projectId, sourceType);
 
     // Queue email for sending
-    await this.queueEmail(email.id);
+    await this.queueEmail(email.id, sourceType);
 
     return email;
   }
@@ -278,7 +278,7 @@ export class EmailService {
     await BillingLimitService.incrementUsage(params.projectId, sourceType);
 
     // Queue email for sending
-    await this.queueEmail(email.id);
+    await this.queueEmail(email.id, sourceType);
 
     return email;
   }
@@ -662,11 +662,15 @@ export class EmailService {
   /**
    * Detects if HTML contains custom patterns that indicate it was written in the HTML editor
    * rather than the visual editor. Mirrors the same logic in apps/web/src/lib/emailStyles.ts.
+   *
+   * The TipTap editor loads StarterKit + TextAlign + Color + TextStyle + Link +
+   * ResizableImage + VariableMention. TextStyle/Color/Link round-trip <span style="..."> and
+   * <a style="..."> markup. This detection therefore PERMITS span + inline styles and only
+   * REJECTS markup TipTap cannot represent (tables, divs, forms, embeds, custom attrs,
+   * <style> blocks, etc).
    */
   private static detectCustomHtmlPatterns(html: string): boolean {
     if (!html || html.trim() === '') return false;
-
-    const hasInlineStyles = /<[^>]+style\s*=\s*["'][^"']*["']/i.test(html);
 
     const classMatches = html.matchAll(/class\s*=\s*["']([^"']*)["']/gi);
     let hasCustomClasses = false;
@@ -682,21 +686,21 @@ export class EmailService {
       }
     }
 
-    const hasCustomAttributes = /<[^>]+(?:data-|aria-|role=|id=)/i.test(html);
-    const hasComplexTables = /<table[^>]*>[\s\S]*?<table/i.test(html);
-    const hasCustomElements = /<(?:div|span|section|article|header|footer|nav|aside)[^>]*>/i.test(html);
+    // Element-attribute-scoped regex; the leading [\s"'] guard prevents `id=` inside
+    // href URLs (e.g. `?id=...`) from false-matching as an HTML id attribute.
+    const hasCustomAttributes = /<[a-z][^>]*?[\s"'](?:data-|aria-|role=|id=)/i.test(html);
+
+    // Elements TipTap cannot round-trip with the currently-loaded extension set.
+    // <span> is intentionally excluded -- TipTap's TextStyle extension handles it.
+    const hasCustomElements =
+      /<(?:div|section|article|header|footer|nav|aside|main|table|tr|td|th|tbody|thead|tfoot|colgroup|col|form|input|button|select|textarea|iframe|video|audio|svg|object|embed|details|summary|dialog)\b/i.test(
+        html,
+      );
+
     const hasMediaQueries = /@media/i.test(html);
     const hasStyleTags = /<style[^>]*>/i.test(html);
 
-    return (
-      hasInlineStyles ||
-      hasCustomClasses ||
-      hasCustomAttributes ||
-      hasComplexTables ||
-      hasCustomElements ||
-      hasMediaQueries ||
-      hasStyleTags
-    );
+    return hasCustomClasses || hasCustomAttributes || hasCustomElements || hasMediaQueries || hasStyleTags;
   }
 
   /**
@@ -1151,7 +1155,7 @@ export class EmailService {
    * Queue an email for sending
    * Adds email to the BullMQ queue for processing by workers
    */
-  private static async queueEmail(emailId: string, delay?: number): Promise<void> {
-    await QueueService.queueEmail(emailId, delay);
+  private static async queueEmail(emailId: string, sourceType: EmailSourceType, delay?: number): Promise<void> {
+    await QueueService.queueEmail(emailId, sourceType, delay);
   }
 }

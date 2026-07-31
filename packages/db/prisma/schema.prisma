@@ -43,7 +43,8 @@ model Project {
   secret String @unique
 
   // Admin
-  disabled Boolean @default(false)
+  disabled       Boolean                @default(false)
+  disabledReason ProjectDisabledReason?
 
   // Billing
   customer     String? @unique
@@ -580,6 +581,7 @@ model Email {
   @@index([projectId, contactId])
   @@index([contactId])
   @@index([campaignId])
+  @@index([campaignId, status]) // Cheap "any email still pending?" probe for campaign finalization
   @@index([workflowExecutionId])
   @@index([workflowStepExecutionId])
   @@index([status])
@@ -631,6 +633,13 @@ model Event {
 // ============================================
 // ENUMS
 // ============================================
+
+enum ProjectDisabledReason {
+  PAYMENT_FAILED // Subscription renewal payment failed
+  EMAIL_REPUTATION // Bounce or complaint rate thresholds exceeded
+  PHISHING_DETECTED // Phishing content detected by LLM scan
+  MANUAL // Disabled by support/admin (e.g. directly in DB)
+}
 
 enum AuthMethod {
   PASSWORD

@@ -50,22 +50,13 @@ const SECURITY_THRESHOLDS = {
   MIN_COMPLAINTS_FOR_CRITICAL: 5,
   MIN_COMPLAINTS_FOR_WARNING: 3,
 
-  // === Absolute count ceilings ===
-  // These trigger regardless of rate — catches high-volume spammers who dilute their bounce rate
-  // 24-hour absolute ceilings
-  BOUNCE_24H_CEILING_WARNING: 50,
-  BOUNCE_24H_CEILING_CRITICAL: 100,
-  COMPLAINT_24H_CEILING_WARNING: 10,
-  COMPLAINT_24H_CEILING_CRITICAL: 25,
-
-  // 7-day absolute ceilings
-  BOUNCE_7DAY_CEILING_WARNING: 200,
-  BOUNCE_7DAY_CEILING_CRITICAL: 500,
-  COMPLAINT_7DAY_CEILING_WARNING: 30,
-  COMPLAINT_7DAY_CEILING_CRITICAL: 75,
-
-  // === New project thresholds (projects < 30 days old) ===
-  // Legitimate senders ramp up gradually; spammers blast immediately
+  // === Absolute count ceilings (new projects only) ===
+  // These trigger regardless of rate — catches new accounts blasting emails
+  // before their bounce rate has caught up. Established projects rely on
+  // rate-based checks only, since high absolute counts at high volume
+  // (e.g. 100 bounces out of 10K) don't indicate abuse.
+  //
+  // Legitimate senders ramp up gradually; spammers blast immediately.
   NEW_PROJECT_AGE_DAYS: 30,
   NEW_PROJECT_BOUNCE_24H_CEILING_WARNING: 10,
   NEW_PROJECT_BOUNCE_24H_CEILING_CRITICAL: 25,
@@ -516,82 +507,54 @@ export class SecurityService {
     const violations: string[] = [];
     const warnings: string[] = [];
 
-    // Pick absolute count ceilings based on project age
-    const bounceCeilings = isNewProject
-      ? {
-          ceiling24hWarning: SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_24H_CEILING_WARNING,
-          ceiling24hCritical: SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_24H_CEILING_CRITICAL,
-          ceiling7dWarning: SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_7DAY_CEILING_WARNING,
-          ceiling7dCritical: SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_7DAY_CEILING_CRITICAL,
-        }
-      : {
-          ceiling24hWarning: SECURITY_THRESHOLDS.BOUNCE_24H_CEILING_WARNING,
-          ceiling24hCritical: SECURITY_THRESHOLDS.BOUNCE_24H_CEILING_CRITICAL,
-          ceiling7dWarning: SECURITY_THRESHOLDS.BOUNCE_7DAY_CEILING_WARNING,
-          ceiling7dCritical: SECURITY_THRESHOLDS.BOUNCE_7DAY_CEILING_CRITICAL,
-        };
+    // === Absolute count ceiling checks (new projects only, rate-independent) ===
+    // Catches new accounts blasting emails before their bounce rate catches up.
+    // Established projects skip these — high absolute counts at high volume
+    // (e.g. 100 bounces out of 10K) don't indicate abuse; rate checks handle them.
+    if (isNewProject) {
+      // 24-hour bounce ceilings
+      if (twentyFourHour.bounces >= SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_24H_CEILING_CRITICAL) {
+        violations.push(
+          `24-hour bounce count (new project) (${twentyFourHour.bounces} bounces) exceeds critical ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_24H_CEILING_CRITICAL})`,
+        );
+      } else if (twentyFourHour.bounces >= SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_24H_CEILING_WARNING) {
+        warnings.push(
+          `24-hour bounce count (new project) (${twentyFourHour.bounces} bounces) exceeds warning ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_24H_CEILING_WARNING})`,
+        );
+      }
 
-    const complaintCeilings = isNewProject
-      ? {
-          ceiling24hWarning: SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_24H_CEILING_WARNING,
-          ceiling24hCritical: SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_24H_CEILING_CRITICAL,
-          ceiling7dWarning: SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_7DAY_CEILING_WARNING,
-          ceiling7dCritical: SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_7DAY_CEILING_CRITICAL,
-        }
-      : {
-          ceiling24hWarning: SECURITY_THRESHOLDS.COMPLAINT_24H_CEILING_WARNING,
-          ceiling24hCritical: SECURITY_THRESHOLDS.COMPLAINT_24H_CEILING_CRITICAL,
-          ceiling7dWarning: SECURITY_THRESHOLDS.COMPLAINT_7DAY_CEILING_WARNING,
-          ceiling7dCritical: SECURITY_THRESHOLDS.COMPLAINT_7DAY_CEILING_CRITICAL,
-        };
+      // 7-day bounce ceilings
+      if (sevenDay.bounces >= SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_7DAY_CEILING_CRITICAL) {
+        violations.push(
+          `7-day bounce count (new project) (${sevenDay.bounces} bounces) exceeds critical ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_7DAY_CEILING_CRITICAL})`,
+        );
+      } else if (sevenDay.bounces >= SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_7DAY_CEILING_WARNING) {
+        warnings.push(
+          `7-day bounce count (new project) (${sevenDay.bounces} bounces) exceeds warning ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_BOUNCE_7DAY_CEILING_WARNING})`,
+        );
+      }
 
-    const projectLabel = isNewProject ? ' (new project)' : '';
+      // 24-hour complaint ceilings
+      if (twentyFourHour.complaints >= SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_24H_CEILING_CRITICAL) {
+        violations.push(
+          `24-hour complaint count (new project) (${twentyFourHour.complaints} complaints) exceeds critical ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_24H_CEILING_CRITICAL})`,
+        );
+      } else if (twentyFourHour.complaints >= SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_24H_CEILING_WARNING) {
+        warnings.push(
+          `24-hour complaint count (new project) (${twentyFourHour.complaints} complaints) exceeds warning ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_24H_CEILING_WARNING})`,
+        );
+      }
 
-    // === Absolute count ceiling checks (rate-independent) ===
-    // These catch high-volume spammers who dilute their bounce rate by blasting emails
-
-    // 24-hour bounce ceilings
-    if (twentyFourHour.bounces >= bounceCeilings.ceiling24hCritical) {
-      violations.push(
-        `24-hour bounce count${projectLabel} (${twentyFourHour.bounces} bounces) exceeds critical ceiling (${bounceCeilings.ceiling24hCritical})`,
-      );
-    } else if (twentyFourHour.bounces >= bounceCeilings.ceiling24hWarning) {
-      warnings.push(
-        `24-hour bounce count${projectLabel} (${twentyFourHour.bounces} bounces) exceeds warning ceiling (${bounceCeilings.ceiling24hWarning})`,
-      );
-    }
-
-    // 7-day bounce ceilings
-    if (sevenDay.bounces >= bounceCeilings.ceiling7dCritical) {
-      violations.push(
-        `7-day bounce count${projectLabel} (${sevenDay.bounces} bounces) exceeds critical ceiling (${bounceCeilings.ceiling7dCritical})`,
-      );
-    } else if (sevenDay.bounces >= bounceCeilings.ceiling7dWarning) {
-      warnings.push(
-        `7-day bounce count${projectLabel} (${sevenDay.bounces} bounces) exceeds warning ceiling (${bounceCeilings.ceiling7dWarning})`,
-      );
-    }
-
-    // 24-hour complaint ceilings
-    if (twentyFourHour.complaints >= complaintCeilings.ceiling24hCritical) {
-      violations.push(
-        `24-hour complaint count${projectLabel} (${twentyFourHour.complaints} complaints) exceeds critical ceiling (${complaintCeilings.ceiling24hCritical})`,
-      );
-    } else if (twentyFourHour.complaints >= complaintCeilings.ceiling24hWarning) {
-      warnings.push(
-        `24-hour complaint count${projectLabel} (${twentyFourHour.complaints} complaints) exceeds warning ceiling (${complaintCeilings.ceiling24hWarning})`,
-      );
-    }
-
-    // 7-day complaint ceilings
-    if (sevenDay.complaints >= complaintCeilings.ceiling7dCritical) {
-      violations.push(
-        `7-day complaint count${projectLabel} (${sevenDay.complaints} complaints) exceeds critical ceiling (${complaintCeilings.ceiling7dCritical})`,
-      );
-    } else if (sevenDay.complaints >= complaintCeilings.ceiling7dWarning) {
-      warnings.push(
-        `7-day complaint count${projectLabel} (${sevenDay.complaints} complaints) exceeds warning ceiling (${complaintCeilings.ceiling7dWarning})`,
-      );
+      // 7-day complaint ceilings
+      if (sevenDay.complaints >= SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_7DAY_CEILING_CRITICAL) {
+        violations.push(
+          `7-day complaint count (new project) (${sevenDay.complaints} complaints) exceeds critical ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_7DAY_CEILING_CRITICAL})`,
+        );
+      } else if (sevenDay.complaints >= SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_7DAY_CEILING_WARNING) {
+        warnings.push(
+          `7-day complaint count (new project) (${sevenDay.complaints} complaints) exceeds warning ceiling (${SECURITY_THRESHOLDS.NEW_PROJECT_COMPLAINT_7DAY_CEILING_WARNING})`,
+        );
+      }
     }
 
     // === Rate-based checks (existing logic) ===
@@ -713,7 +676,7 @@ export class SecurityService {
       // Disable the project
       await prisma.project.update({
         where: {id: projectId},
-        data: {disabled: true},
+        data: {disabled: true, disabledReason: 'EMAIL_REPUTATION'},
       });
 
       // Log critical security event
@@ -802,7 +765,36 @@ export class SecurityService {
       const uniqueUrls = [...new Set(urlMatches.map(u => u.replace(/[.,;)]+$/, '')))].slice(0, 20);
 
       // Extract sender domain for context
-      const senderDomain = fromEmail.includes('@') ? fromEmail.split('@')[1] : fromEmail;
+      const senderDomain = (fromEmail.split('@')[1] ?? fromEmail).toLowerCase();
+
+      // Check whether this domain is verified by the project. A verified
+      // domain means the sender proved DNS/DKIM control — strong evidence of
+      // legitimacy, especially for institutional TLDs like .gov, .edu, .mil.
+      const verifiedDomain = await prisma.domain.findFirst({
+        where: {projectId, domain: senderDomain, verified: true},
+        select: {domain: true},
+      });
+      const isDomainVerified = verifiedDomain !== null;
+
+      // Institutional TLDs that imply a vetted, real-world entity behind the
+      // domain (government, military, accredited education). When combined
+      // with DKIM verification these effectively cannot be phishing senders.
+      const institutionalTldPattern =
+        /\.(gov|mil|edu)(\.[a-z]{2,})?$|\.gc\.ca$|\.gouv\.fr$|\.gov\.uk$|\.ac\.[a-z]{2,}$/i;
+      const isInstitutionalDomain = institutionalTldPattern.test(senderDomain);
+
+      // Skip the LLM check entirely when the sender is a verified institutional
+      // domain (e.g. a .gov customer). These TLDs are gated by registries that
+      // verify the real-world entity, and DKIM verification proves the project
+      // controls the domain — together they make phishing effectively
+      // impossible from this sender. Avoids paying for an LLM call that
+      // sometimes false-positives on official government communications.
+      if (isDomainVerified && isInstitutionalDomain) {
+        signale.info(
+          `[PHISHING] Skipping check for project ${projectId} — verified institutional domain (${senderDomain})`,
+        );
+        return safeResponse;
+      }
 
       // Call OpenRouter API
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -835,7 +827,11 @@ Criteria for phishing/dangerous content:
 - Requests for sensitive personal information
 
 IMPORTANT - Use sender and project context when evaluating:
-- The sender project name and domain are provided. Links to the sender's own domain(s) are expected and NOT suspicious.
+- The sender project name and domain are provided, along with whether the domain has been verified (DKIM/DNS) by this project.
+- A VERIFIED sender domain means the sender proved ownership of the domain via DNS records. This is strong evidence of legitimacy.
+- If the verified sender domain is an institutional domain (e.g. .gov, .gov.uk, .gouv.fr, .gc.ca, .mil, .edu, .ac.*), treat the email as legitimate institutional communication. Government, military, and accredited education domains cannot be obtained by phishers — do NOT flag these as impersonation of government/banks/etc. just because the content mentions official topics, taxes, benefits, court notices, etc.
+- Impersonation rules only apply when the sender domain does NOT match the brand being referenced. A verified bank domain sending a banking email is not impersonating itself.
+- Links to the sender's own domain(s) are expected and NOT suspicious.
 - URLs that match or are clearly related to the project name or sender domain add credibility.
 - Only flag a URL as suspicious if it is unrelated to or impersonates a different known brand.
 - Lack of recognizable brand does NOT make an email phishing — many legitimate businesses are not famous.
@@ -848,6 +844,8 @@ Set confidence to 100 only if you are absolutely certain it's phishing.`,
               role: 'user',
               content: `Sender project name: ${projectName}
 Sender domain: ${senderDomain}
+Sender domain verified (DKIM/DNS confirmed by project): ${isDomainVerified ? 'yes' : 'no'}
+Sender domain is an institutional TLD (gov/mil/edu/ac/etc.): ${isInstitutionalDomain ? 'yes' : 'no'}
 ${uniqueUrls.length > 0 ? `URLs found in email: ${uniqueUrls.join(', ')}` : ''}
 
 Subject: ${subject}
@@ -971,7 +969,7 @@ ${strippedBody.substring(0, 2000)}`,
       // Disable the project
       await prisma.project.update({
         where: {id: projectId},
-        data: {disabled: true},
+        data: {disabled: true, disabledReason: 'PHISHING_DETECTED'},
       });
 
       const violation = `A policy violation was detected. Please contact support for more details.`;

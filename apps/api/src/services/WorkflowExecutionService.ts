@@ -910,7 +910,14 @@ export class WorkflowExecutionService {
   }
 
   /**
-   * WEBHOOK step - Call an external webhook
+   * WEBHOOK step - Call an external webhook.
+   *
+   * Renders `{{vars}}` in `url`, header values, and `body`. The variable
+   * scope is a superset of the SEND_EMAIL scope: id, email, contact data,
+   * execution context, and subscribe/unsubscribe/manage URLs — plus a
+   * webhook-only `event` namespace exposing the trigger event payload.
+   * `method` is intentionally NOT rendered — it must remain a literal
+   * HTTP verb.
    */
   private static async executeWebhook(
     _step: WorkflowStep,
@@ -926,9 +933,37 @@ export class WorkflowExecutionService {
       contact.data && typeof contact.data === 'object' && !Array.isArray(contact.data)
         ? (contact.data as Record<string, unknown>)
         : {};
+    const executionContext =
+      execution.context && typeof execution.context === 'object' && !Array.isArray(execution.context)
+        ? (execution.context as Record<string, unknown>)
+        : {};
     const context = execution.context || {};
 
-    const payload = body || {
+    // Render scope: SEND_EMAIL's scope (id, email, contact data, execution
+    // context, subscribe/unsubscribe/manage URLs) plus a webhook-only
+    // `event` namespace carrying the trigger event payload. `method` is
+    // intentionally NOT rendered — it must remain a literal HTTP verb.
+    const variables = {
+      id: contact.id,
+      email: contact.email,
+      ...contactData,
+      ...executionContext,
+      data: contactData,
+      event: context,
+      unsubscribeUrl: `${DASHBOARD_URI}/unsubscribe/${contact.id}`,
+      subscribeUrl: `${DASHBOARD_URI}/subscribe/${contact.id}`,
+      manageUrl: `${DASHBOARD_URI}/manage/${contact.id}`,
+    };
+
+    const renderedUrl = this.renderTemplate(url, variables);
+    const renderedHeaders = headers
+      ? Object.fromEntries(
+          Object.entries(headers).map(([key, value]) => [key, this.renderTemplate(value, variables)]),
+        )
+      : undefined;
+    const renderedBody = body ? this.renderJsonTemplate(body, variables) : undefined;
+
+    const payload = renderedBody || {
       contact: {
         email: contact.email,
         subscribed: contact.subscribed,
@@ -946,11 +981,11 @@ export class WorkflowExecutionService {
     };
 
     // Make HTTP request
-    const response = await WorkflowExecutionService.safeFetch(url, {
+    const response = await WorkflowExecutionService.safeFetch(renderedUrl, {
       method,
       headers: {
         'Content-Type': 'application/json',
-        ...headers,
+        ...renderedHeaders,
       },
       body: method !== 'GET' ? JSON.stringify(payload) : undefined,
     });
@@ -964,12 +999,44 @@ export class WorkflowExecutionService {
     }
 
     return {
-      url,
+      url: renderedUrl,
       method,
       statusCode: response.status,
       success: response.ok,
       response: parsedResponse,
     };
+  }
+
+  /**
+   * Helper: Render template variables WITHOUT HTML escaping.
+   * Webhook url/headers/body are URL/JSON contexts, not HTML — escaping
+   * would corrupt substituted values (& → &amp;, " → &quot;). The
+   * SEND_EMAIL step escapes its HTML body at the call site instead.
+   */
+  private static renderTemplate(template: string, variables: Record<string, unknown>): string {
+    return renderTemplate(template, variables);
+  }
+
+  /**
+   * Helper: Recursively render template variables in any JSON-shaped value.
+   * Strings are rendered, arrays/objects are walked, and non-string scalars
+   * (numbers, booleans, null) are returned untouched.
+   */
+  private static renderJsonTemplate(value: unknown, variables: Record<string, unknown>): unknown {
+    if (typeof value === 'string') {
+      return this.renderTemplate(value, variables);
+    }
+    if (Array.isArray(value)) {
+      return value.map(item => this.renderJsonTemplate(item, variables));
+    }
+    if (value !== null && typeof value === 'object') {
+      const result: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        result[key] = this.renderJsonTemplate(child, variables);
+      }
+      return result;
+    }
+    return value;
   }
 
   /**

@@ -8,7 +8,12 @@ import type {SendEmailJobData} from '@plunk/types';
 import {type Job, Worker} from 'bullmq';
 import signale from 'signale';
 
-import {DASHBOARD_URI, EMAIL_RATE_LIMIT_PER_SECOND} from '../app/constants.js';
+import {
+  DASHBOARD_URI,
+  EMAIL_RATE_LIMIT_PER_SECOND,
+  EMAIL_WORKER_CONCURRENCY,
+  EMAIL_WORKER_MAX_CONCURRENCY,
+} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
 import {CampaignService} from '../services/CampaignService.js';
 import {EmailService} from '../services/EmailService.js';
@@ -47,9 +52,31 @@ async function getEmailRateLimit(): Promise<number> {
   return DEFAULT_RATE_LIMIT;
 }
 
+/**
+ * Derive worker concurrency from the rate limit so a higher SES quota actually
+ * translates into higher throughput. The mean job duration is ~0.5s (Prisma
+ * reads + HTML compile + SES call + writes), so `rate * 0.5` gives ~2× headroom
+ * over the per-second cap. Clamped to keep sandbox accounts useful and to
+ * protect the Prisma pool on very large quotas.
+ */
+function deriveWorkerConcurrency(rateLimit: number): number {
+  if (EMAIL_WORKER_CONCURRENCY !== undefined) {
+    return EMAIL_WORKER_CONCURRENCY;
+  }
+
+  const TARGET_JOB_SECONDS = 0.5;
+  const MIN_CONCURRENCY = 5;
+  const derived = Math.ceil(rateLimit * TARGET_JOB_SECONDS);
+  return Math.max(MIN_CONCURRENCY, Math.min(derived, EMAIL_WORKER_MAX_CONCURRENCY));
+}
+
 export async function createEmailWorker() {
   // Fetch the rate limit (from env, AWS, or default)
   const rateLimit = await getEmailRateLimit();
+  const concurrency = deriveWorkerConcurrency(rateLimit);
+  signale.info(
+    `[EMAIL-PROCESSOR] Worker concurrency: ${concurrency} (rate limit: ${rateLimit}/s)`,
+  );
   const worker = new Worker<SendEmailJobData>(
     emailQueue.name,
     async (job: Job<SendEmailJobData>) => {
@@ -253,7 +280,7 @@ export async function createEmailWorker() {
     },
     {
       connection: emailQueue.opts.connection,
-      concurrency: 10, // Process up to 10 emails concurrently
+      concurrency,
       limiter: {
         max: rateLimit, // Max emails per second (from env, AWS SES quota, or default)
         duration: 1000,

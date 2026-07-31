@@ -1,6 +1,50 @@
 import {PrismaClient} from '@plunk/db';
 import {execSync} from 'child_process';
 
+// Snake-cased table names from prisma schema (see @@map directives).
+// Order doesn't matter — TRUNCATE with CASCADE handles FK dependencies in one statement.
+const TRUNCATE_TABLES = [
+  'events',
+  'workflow_step_executions',
+  'emails',
+  'workflow_executions',
+  'workflow_transitions',
+  'workflow_steps',
+  'workflows',
+  'campaigns',
+  'templates',
+  'segment_memberships',
+  'segments',
+  'contacts',
+  'domains',
+  'memberships',
+  'projects',
+  'users',
+];
+
+/**
+ * Connects to the admin `postgres` database to ensure the worker's test DB exists.
+ * Postgres has no `CREATE DATABASE IF NOT EXISTS`, so we check pg_database first.
+ */
+async function ensureDatabaseExists(databaseUrl: string, workerDbName: string) {
+  const adminUrl = new URL(databaseUrl);
+  adminUrl.pathname = '/postgres';
+  adminUrl.searchParams.delete('connection_limit');
+  adminUrl.searchParams.delete('pool_timeout');
+
+  const admin = new PrismaClient({datasources: {db: {url: adminUrl.toString()}}});
+  try {
+    const rows = await admin.$queryRawUnsafe<{exists: boolean}[]>(
+      `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '${workerDbName}') AS exists`,
+    );
+    if (!rows[0]?.exists) {
+      await admin.$executeRawUnsafe(`CREATE DATABASE "${workerDbName}"`);
+    }
+  } finally {
+    await admin.$disconnect();
+  }
+}
+
 /**
  * Test database helper
  * Manages test database isolation and cleanup
@@ -9,44 +53,56 @@ class TestDatabase {
   private prisma: PrismaClient | null = null;
 
   async initialize() {
-    // Use test database URL if provided, otherwise use main database
+    // setup.ts has already rewritten DATABASE_URL to include the per-worker DB name
+    // (e.g. plunk_test_w1, plunk_test_w2). We create that DB if missing, migrate it,
+    // then open the long-lived client we use for tests.
     const databaseUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
-
     if (!databaseUrl) {
       throw new Error('DATABASE_URL or TEST_DATABASE_URL must be set for testing');
     }
 
-    // Create Prisma client with connection pool limits
-    this.prisma = new PrismaClient({
-      datasources: {
-        db: {
-          url: databaseUrl,
-        },
-      },
-      // Limit connection pool to prevent memory issues in tests
-      // @ts-ignore - These options exist but may not be in types
-      __internal: {
-        engine: {
-          connection_limit: 5,
-        },
-      },
-    });
+    const url = new URL(databaseUrl);
+    const workerDbName = url.pathname.replace(/^\//, '');
+    if (!workerDbName) {
+      throw new Error('DATABASE_URL must include a database name');
+    }
 
-    // Connect to database
-    await this.prisma.$connect();
+    // Bump the pool above Prisma's default (~5 on CI). Test Postgres has
+    // max_connections=100; with N workers we want N*20 ≤ 100 — fine up to 4 workers.
+    if (!url.searchParams.has('connection_limit')) {
+      url.searchParams.set('connection_limit', '20');
+    }
+    if (!url.searchParams.has('pool_timeout')) {
+      url.searchParams.set('pool_timeout', '20');
+    }
 
-    // Run migrations (only once per test suite)
+    await ensureDatabaseExists(databaseUrl, workerDbName);
+
+    // Run pending migrations against this worker's DB. `migrate deploy` is a no-op
+    // when up-to-date and avoids the drift prompts that `migrate dev` does.
     try {
-      execSync('yarn workspace @plunk/db migrate:dev', {
+      execSync('yarn workspace @plunk/db migrate:prod', {
         env: {
           ...process.env,
-          DATABASE_URL: databaseUrl,
+          DATABASE_URL: url.toString(),
+          DIRECT_DATABASE_URL: process.env.DIRECT_DATABASE_URL || url.toString(),
         },
-        stdio: 'ignore',
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
-      console.warn('Migration warning (may already be up to date):', error);
+      const err = error as {stdout?: string; stderr?: string; message?: string};
+      console.error('Migration failed for', workerDbName);
+      if (err.stdout) console.error('stdout:', err.stdout);
+      if (err.stderr) console.error('stderr:', err.stderr);
+      if (!err.stdout && !err.stderr) console.error(err.message);
+      throw error;
     }
+
+    this.prisma = new PrismaClient({
+      datasources: {db: {url: url.toString()}},
+    });
+    await this.prisma.$connect();
   }
 
   /**
@@ -60,80 +116,32 @@ class TestDatabase {
   }
 
   /**
-   * Clean up database after each test
-   * Deletes all records in reverse order of dependencies
-   * Uses batched deletes to prevent memory issues with large datasets
-   * Retries on deadlock to handle race conditions with background event tracking
+   * Wipe all per-test data with a single TRUNCATE ... CASCADE statement.
+   * Roughly an order of magnitude faster than 14 sequential deleteMany calls
+   * — TRUNCATE skips the row scan and only touches table headers.
    */
   async cleanup() {
     if (!this.prisma) return;
 
+    const tables = TRUNCATE_TABLES.map(t => `"${t}"`).join(', ');
     const maxRetries = 3;
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Use a transaction to ensure all deletes happen atomically
-        // This prevents foreign key constraint violations and race conditions
-        await this.prisma.$transaction([
-          // Level 1: Delete deepest dependencies first
-          this.prisma.event.deleteMany(),
-          this.prisma.workflowStepExecution.deleteMany(),
-
-          // Level 2: Delete entities that depend on Level 1
-          this.prisma.email.deleteMany(),
-          this.prisma.workflowExecution.deleteMany(),
-
-          // Level 3: Delete workflow structure
-          this.prisma.workflowTransition.deleteMany(),
-          this.prisma.workflowStep.deleteMany(),
-          this.prisma.workflow.deleteMany(),
-
-          // Level 4: Delete campaigns and templates
-          this.prisma.campaign.deleteMany(),
-          this.prisma.template.deleteMany(),
-
-          // Level 5: Delete segment relationships
-          this.prisma.segmentMembership.deleteMany(),
-          this.prisma.segment.deleteMany(),
-
-          // Level 6: Delete contacts
-          this.prisma.contact.deleteMany(),
-
-          // Level 7: Delete domains
-          this.prisma.domain.deleteMany(),
-
-          // Level 8: Delete memberships (has FK to both user and project)
-          this.prisma.membership.deleteMany(),
-
-          // Level 9: Delete projects
-          this.prisma.project.deleteMany(),
-
-          // Level 10: Delete users last
-          this.prisma.user.deleteMany(),
-        ]);
-
-        // Success - exit retry loop
+        await this.prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE`);
         return;
       } catch (error) {
         lastError = error as Error;
-
-        // Check if this is a deadlock error (PostgreSQL error code 40P01)
         const isDeadlock = error instanceof Error && error.message?.includes('deadlock detected');
-
         if (isDeadlock && attempt < maxRetries) {
-          // Wait before retrying (exponential backoff)
-          const delay = Math.pow(2, attempt) * 50; // 100ms, 200ms, 400ms
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 50));
           continue;
         }
-
-        // Not a deadlock or out of retries
         break;
       }
     }
 
-    // If we get here, all retries failed
     console.error(`Error cleaning up database after ${maxRetries} attempts:`, lastError);
     throw lastError;
   }

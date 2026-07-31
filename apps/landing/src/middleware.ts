@@ -28,7 +28,7 @@ function getQ(types: Array<{ type: string; q: number }>, target: string): number
 function negotiate(accept: string): Negotiated {
   if (!accept) return 'html';
   const types = parseAccept(accept);
-  const mdQ = getQ(types, 'text/markdown');
+  const mdQ = types.find(t => t.type === 'text/markdown')?.q ?? -1;
   const htmlQ = getQ(types, 'text/html');
   if (mdQ <= 0 && htmlQ <= 0) return 'none';
   if (mdQ > 0 && mdQ >= htmlQ) return 'markdown';

@@ -1,0 +1,89 @@
+---
+title: Waitlist with confirmation email
+description: Track signups as a custom event, store everyone who joins as a contact, and automatically email them
+icon: ListOrdered
+---
+
+A waitlist is the simplest possible Plunk workflow: one tracked event from your app, one workflow that listens for it, one email.
+
+## Setup
+
+import {Step, Steps} from 'fumadocs-ui/components/steps';
+
+<Steps>
+
+<Step>
+
+### Create the confirmation template
+
+In **Templates → New template**, create a **Marketing** template. Use `{{variable}}` placeholders for anything you want to personalise from contact data:
+
+```text
+Subject: You're on the list, {{firstName}}
+
+Hi {{firstName}}, thanks for joining the {{product}} waitlist.
+We'll let you know as soon as your spot opens up.
+```
+
+</Step>
+
+<Step>
+
+### Track the signup from your backend
+
+Call `POST /v1/track` when a user submits the form. Use a secret key (`sk_*`) — never call this from the browser.
+
+```bash
+curl https://next-api.useplunk.com/v1/track \
+  -H "Authorization: Bearer sk_your_secret_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "waitlist.joined",
+    "email": "ada@example.com",
+    "data": { "firstName": "Ada", "product": "Beta" }
+  }'
+```
+
+This call upserts the contact (subscribed by default) and records `waitlist.joined` on them. Anything you put in `data` lands on the contact and is available as `{{firstName}}`, `{{product}}`, etc. in the template.
+
+<Callout title="Pick a stable event name" type="info">
+  A workflow's trigger event **cannot be changed after the first execution**. Namespace it (`waitlist.joined`) rather than something generic you might want to reuse.
+</Callout>
+
+</Step>
+
+<Step>
+
+### Create the workflow
+
+**Workflows → New workflow**:
+
+- **Trigger**: `EVENT` on `waitlist.joined`
+- Add a `SEND_EMAIL` step pointing at the template from step 1
+
+Enable the workflow. Workflows are created disabled — until the toggle is on, nothing fires.
+
+</Step>
+
+</Steps>
+
+## Tagging signups for later
+
+If you want to segment on waitlist signups later, add an `UPDATE_CONTACT` step before the email:
+
+```json
+{ "stage": "waitlist", "waitlistSource": "{{event.referrer}}" }
+```
+
+You can then build a [segment](/concepts/segments) of contacts where `stage == "waitlist"` to target with follow-up campaigns. This is cleaner than filtering on "ever fired `waitlist.joined`."
+
+## What's next
+
+<Cards>
+  <Card title="Workflows" href="/concepts/workflows">
+    Step types and trigger semantics.
+  </Card>
+  <Card title="Track event API" href="/api-reference/public-api/trackEvent">
+    Full reference for `POST /v1/track`.
+  </Card>
+</Cards>

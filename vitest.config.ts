@@ -22,18 +22,19 @@ export default defineConfig({
     },
     testTimeout: 30000,
     hookTimeout: 30000,
-    // Memory optimization: Run tests in sequence to prevent memory issues
-    // This is critical for tests that create large datasets
+    // Each fork is a worker with an isolated Postgres database and Redis db-number
+    // (see test/setup.ts). That isolation is what lets us run files in parallel
+    // without the cross-test interference we used to hit with a shared DB.
     pool: 'forks',
     poolOptions: {
       forks: {
-        singleFork: true, // Run all tests in a single fork to limit memory
+        // Cap at 4 to stay within Postgres' default max_connections=100
+        // when each worker uses connection_limit=20.
+        maxForks: 4,
+        minForks: 1,
       },
     },
-    // Run tests sequentially to avoid database cleanup conflicts
-    fileParallelism: false,
-    // Limit concurrent test files to reduce memory pressure
-    maxConcurrency: 3,
+    maxConcurrency: 5,
     // Only include our test files, not dependency tests
     include: [
       'apps/**/__tests__/**/*.{test,spec}.{ts,tsx}',

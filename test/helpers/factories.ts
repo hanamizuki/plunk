@@ -108,7 +108,9 @@ export class TestFactories {
   async createUser(options: UserFactoryOptions = {}) {
     const email = options.email || `user-${uniqueId()}@test.com`;
     const password = options.password || 'password123';
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Cost factor 4 is the bcrypt minimum — ~100x faster than the production cost of 10.
+    // Test users don't need real-world hash strength.
+    const hashedPassword = await bcrypt.hash(password, 4);
 
     return this.prisma.user.create({
       data: {

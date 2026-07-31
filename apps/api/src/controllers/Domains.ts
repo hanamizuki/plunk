@@ -4,7 +4,7 @@ import type {NextFunction, Request, Response} from 'express';
 
 import {redis} from '../database/redis.js';
 import {NotAllowed, NotFound} from '../exceptions/index.js';
-import {isAuthenticated, requireEmailVerified} from '../middleware/auth.js';
+import {requireAuth, requireEmailVerified} from '../middleware/auth.js';
 import {DomainService} from '../services/DomainService.js';
 import {Keys} from '../services/keys.js';
 import {MembershipService} from '../services/MembershipService.js';
@@ -17,16 +17,12 @@ export class Domains {
    * Get all domains for a project
    */
   @Get('project/:projectId')
-  @Middleware([isAuthenticated, requireEmailVerified])
+  @Middleware([requireAuth, requireEmailVerified])
   @CatchAsync
-  public async getProjectDomains(req: Request, res: Response, _next: NextFunction) {
+  public async getProjectDomains(_req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
-    const {projectId} = DomainSchemas.projectId.parse(req.params);
 
-    // Verify user has access to this project
-    await MembershipService.requireAccess(auth.userId!, projectId);
-
-    const domains = await DomainService.getProjectDomains(projectId);
+    const domains = await DomainService.getProjectDomains(auth.projectId!);
 
     return res.status(200).json(domains);
   }
@@ -35,18 +31,17 @@ export class Domains {
    * Add a new domain to a project
    */
   @Post('')
-  @Middleware([isAuthenticated, requireEmailVerified])
+  @Middleware([requireAuth, requireEmailVerified])
   @CatchAsync
   public async addDomain(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
-    const {projectId, domain} = DomainSchemas.create.parse(req.body);
+    const {domain} = DomainSchemas.create.parse(req.body);
+    const projectId = auth.projectId!;
 
-    if (!auth.userId) {
-      throw new NotFound('User authentication required');
+    // Require admin role for JWT users (API keys bypass — project-scoped by design)
+    if (auth.type === 'jwt') {
+      await MembershipService.requireAdminAccess(auth.userId!, projectId);
     }
-
-    // Verify user has admin access to this project
-    await MembershipService.requireAdminAccess(auth.userId!, projectId);
 
     // Block domain changes on disabled projects
     const isDisabled = await SecurityService.isProjectDisabled(projectId);
@@ -68,6 +63,12 @@ export class Domains {
     const ownershipCheck = await DomainService.checkDomainOwnership(domain, auth.userId);
 
     if (ownershipCheck.exists) {
+      if (ownershipCheck.projectId === projectId) {
+        return res.status(400).json({
+          error: 'This domain is already linked to this project.',
+        });
+      }
+
       // If domain exists and user is a member of that project, allow it
       if (ownershipCheck.isMember) {
         return res.status(400).json({
@@ -99,7 +100,7 @@ export class Domains {
    * Check verification status for a domain
    */
   @Get(':id/verify')
-  @Middleware([isAuthenticated, requireEmailVerified])
+  @Middleware([requireAuth, requireEmailVerified])
   @CatchAsync
   public async checkVerification(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
@@ -107,12 +108,9 @@ export class Domains {
 
     const domain = await DomainService.id(id);
 
-    if (!domain) {
+    if (!domain || domain.projectId !== auth.projectId) {
       throw new NotFound('Domain not found');
     }
-
-    // Verify user has access to the project this domain belongs to
-    await MembershipService.requireAccess(auth.userId!, domain.projectId);
 
     const verificationStatus = await DomainService.checkVerification(id);
 
@@ -127,7 +125,7 @@ export class Domains {
    * Remove a domain from a project
    */
   @Delete(':id')
-  @Middleware([isAuthenticated, requireEmailVerified])
+  @Middleware([requireAuth, requireEmailVerified])
   @CatchAsync
   public async removeDomain(req: Request, res: Response, _next: NextFunction) {
     const auth = res.locals.auth;
@@ -135,12 +133,14 @@ export class Domains {
 
     const domain = await DomainService.id(id);
 
-    if (!domain) {
+    if (!domain || domain.projectId !== auth.projectId) {
       throw new NotFound('Domain not found');
     }
 
-    // Verify user has admin access to the project this domain belongs to
-    await MembershipService.requireAdminAccess(auth.userId!, domain.projectId);
+    // Require admin role for JWT users (API keys bypass — project-scoped by design)
+    if (auth.type === 'jwt') {
+      await MembershipService.requireAdminAccess(auth.userId!, domain.projectId);
+    }
 
     // Block domain changes on disabled projects
     const isDisabled = await SecurityService.isProjectDisabled(domain.projectId);

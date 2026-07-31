@@ -1,0 +1,87 @@
+---
+title: Sync unsubscribes to your database
+description: Mirror Plunk's subscription state into your own user table using a workflow + webhook
+icon: RefreshCw
+---
+
+Every flip of a contact's `subscribed` state — manual edits, the hosted unsubscribe page, bounces, complaints — fires a `contact.unsubscribed` event. Wire a workflow with a `WEBHOOK` step to forward that to your backend.
+
+## Setup
+
+import {Step, Steps} from 'fumadocs-ui/components/steps';
+
+<Steps>
+
+<Step>
+
+### Build the receiving endpoint
+
+A public HTTPS endpoint that verifies a shared secret and updates the user row. Webhook requests time out after 10 seconds, so do the work async if it's slow.
+
+```ts
+app.post('/plunk/unsubscribes', async (req, res) => {
+  if (req.header('authorization') !== `Bearer ${process.env.PLUNK_WEBHOOK_SECRET}`) {
+    return res.status(401).end();
+  }
+
+  const { contact, event } = req.body;
+  await db.user.update({
+    where: { email: contact.email },
+    data: {
+      emailSubscribed: false,
+      emailUnsubscribedReason: event.reason ?? 'user_action',
+    },
+  });
+
+  res.status(204).end();
+});
+```
+
+`event.reason` is `"bounce"` or `"complaint"` for automatic unsubscribes, and absent for manual / self-service ones.
+
+</Step>
+
+<Step>
+
+### Create the workflow
+
+**Workflows → New workflow**:
+
+- **Trigger**: `EVENT` on `contact.unsubscribed`
+- Add a `WEBHOOK` step:
+  - **URL**: `https://api.example.com/plunk/unsubscribes`
+  - **Headers**: `{ "Authorization": "Bearer your-shared-secret" }`
+  - Leave the body blank to get the [default payload](/guides/webhooks#webhook-payload).
+
+Enable the workflow.
+
+</Step>
+
+</Steps>
+
+## Mirroring resubscribes
+
+Build a second workflow with the same shape, triggered by `contact.subscribed`. Keep it separate from the unsubscribe flow — two short workflows are easier to monitor than one branched one.
+
+## The reverse direction
+
+If your product is the source of truth (a user toggles their email preference in your settings UI), call `PATCH /contacts/:id` from your backend:
+
+```bash
+curl -X PATCH https://next-api.useplunk.com/contacts/cnt_abc \
+  -H "Authorization: Bearer sk_your_secret_key" \
+  -d '{"subscribed": false}'
+```
+
+That flip also fires `contact.unsubscribed`, meaning your own webhook will round-trip back into your handler. That's usually harmless because the update is idempotent — but be aware of it.
+
+## What's next
+
+<Cards>
+  <Card title="Webhooks" href="/guides/webhooks">
+    Webhook step reference, payload shape, and safety.
+  </Card>
+  <Card title="Unsubscribe pages" href="/guides/unsubscribe-pages">
+    The hosted pages and template URL variables.
+  </Card>
+</Cards>
