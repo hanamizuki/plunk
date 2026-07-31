@@ -65,10 +65,15 @@ export function renderTemplate(
       }, obj);
     };
 
-    // Try multiple lookup strategies
+    // Try multiple lookup strategies. `??` (not `||`) so a present-but-falsy
+    // value is kept instead of falling through: `false` and `0` are real values
+    // a template must render. This matters most for dotted paths
+    // ({{data.active}}, {{event.count}}) where only the first lookup can ever
+    // match, so a falsy result has nothing to fall back to and would silently
+    // render as empty — corrupting webhook JSON bodies and email copy alike.
     const value =
-      getValue(variables, mainKey) || // Try as nested path (e.g., data.firstName)
-      variables[mainKey] || // Try as top-level property
+      getValue(variables, mainKey) ?? // Try as nested path (e.g., data.firstName)
+      variables[mainKey] ?? // Try as top-level property
       (variables.data as Record<string, unknown>)?.[mainKey]; // Try in data object
 
     // Handle array values (for lists). The <li> wrapper only makes sense in an
@@ -83,12 +88,11 @@ export function renderTemplate(
 
     let resolved = value ?? defaultValue ?? '';
 
-    // `??` also falls back on blank strings. Two shapes reach this branch: ''
-    // stored under the data object (the third lookup returns it verbatim — the
-    // || chain only skips falsy values in EARLIER lookups) and whitespace-only
-    // strings (truthy, so even the first lookup returns them). Both otherwise
-    // render greetings like "Hi ,". A top-level-only '' never gets here — the
-    // || chain yields undefined and the ?? above already applies the default.
+    // `??` alone does not fall back on blank strings, so apply the default for
+    // them here too — otherwise a stored '' or a whitespace-only value renders
+    // greetings like "Hi ,". Since the lookup chain above is `??`, an empty
+    // string now reaches this branch from ANY of the three lookups rather than
+    // only from the data object.
     if (typeof resolved === 'string' && resolved.trim() === '' && defaultValue !== undefined) {
       resolved = defaultValue;
     }
