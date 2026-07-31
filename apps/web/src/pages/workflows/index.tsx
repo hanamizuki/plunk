@@ -164,6 +164,12 @@ export default function WorkflowsPage() {
         enabled: !currentlyEnabled,
       });
       toast.success(`Workflow ${!currentlyEnabled ? 'enabled' : 'disabled'} successfully`);
+      // Under an Active/Disabled filter the toggled row no longer matches, so it
+      // leaves the visible set — drop it from the selection for the same reason
+      // as the per-row delete below.
+      if (statusFilter !== 'ALL') {
+        setRowSelection(({[workflowId]: _removed, ...rest}) => rest);
+      }
       void mutate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to toggle workflow');
