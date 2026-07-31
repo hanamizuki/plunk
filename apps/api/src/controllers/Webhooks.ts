@@ -616,7 +616,12 @@ export class Webhooks {
 
           await prisma.project.update({
             where: {id: project.id},
-            data: {disabled: true, disabledReason: 'PAYMENT_FAILED'},
+            data: {
+              disabled: true,
+              // Preserve an existing security/manual disable reason — otherwise a later
+              // invoice.paid would use PAYMENT_FAILED to silently lift that suspension.
+              ...(project.disabled && project.disabledReason ? {} : {disabledReason: 'PAYMENT_FAILED'}),
+            },
           });
 
           await NtfyService.notifyProjectDisabledForPayment(project.name, project.id);

@@ -244,6 +244,17 @@ export function coerceCustomValue(value: string): string | boolean | number {
   const lower = trimmed.toLowerCase();
   if (BOOLEAN_TRUE.has(lower)) return true;
   if (BOOLEAN_FALSE.has(lower)) return false;
-  if (NUMERIC_RE.test(trimmed)) return Number(trimmed);
+  if (NUMERIC_RE.test(trimmed)) {
+    const parsed = Number(trimmed);
+    // Integers beyond Number.MAX_SAFE_INTEGER (e.g. an 18+ digit order/ID
+    // string) silently lose precision in a plain `Number()` conversion and
+    // can't be recovered — keep those as strings. Decimals are unaffected:
+    // NUMERIC_RE only allows well-formed literals, so `Number()` on the
+    // matched decimal part never loses precision (only reformats, e.g. "1.0" -> 1).
+    const isInteger = !trimmed.includes('.');
+    if (!isInteger || Number.isSafeInteger(parsed)) {
+      return parsed;
+    }
+  }
   return value;
 }

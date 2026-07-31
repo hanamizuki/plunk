@@ -94,18 +94,30 @@ export const EMAIL_RATE_LIMIT_PER_SECOND = process.env.EMAIL_RATE_LIMIT_PER_SECO
   ? Number(process.env.EMAIL_RATE_LIMIT_PER_SECOND)
   : undefined;
 
+// Rejects non-integer or below-minimum values so a misconfigured env var fails
+// loudly at startup instead of silently stalling the email queue with a NaN
+// or zero BullMQ concurrency. `raw` is only ever passed in already-truthy
+// (the call sites guard on `process.env.X ? ... : default`).
+function parseWorkerConcurrency(raw: string, name: string, minimum: number): number {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new Error(`${name} must be an integer >= ${minimum}`);
+  }
+  return value;
+}
+
 // Email Worker Concurrency (optional override)
 // If not set, concurrency is derived from the effective rate limit so a higher
 // SES quota actually translates into higher throughput. Set this to pin a fixed
 // value (useful when Prisma pool size or memory is the binding constraint).
 export const EMAIL_WORKER_CONCURRENCY = process.env.EMAIL_WORKER_CONCURRENCY
-  ? Number(process.env.EMAIL_WORKER_CONCURRENCY)
+  ? parseWorkerConcurrency(process.env.EMAIL_WORKER_CONCURRENCY, 'EMAIL_WORKER_CONCURRENCY', 1)
   : undefined;
 
 // Upper bound for auto-derived concurrency. Raise this if you have a large SES
 // quota AND have sized the Prisma connection pool accordingly.
 export const EMAIL_WORKER_MAX_CONCURRENCY = process.env.EMAIL_WORKER_MAX_CONCURRENCY
-  ? Number(process.env.EMAIL_WORKER_MAX_CONCURRENCY)
+  ? parseWorkerConcurrency(process.env.EMAIL_WORKER_MAX_CONCURRENCY, 'EMAIL_WORKER_MAX_CONCURRENCY', 5)
   : 50;
 
 // Storage

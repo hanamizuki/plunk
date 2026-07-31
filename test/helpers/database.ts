@@ -27,6 +27,13 @@ const TRUNCATE_TABLES = [
  * Postgres has no `CREATE DATABASE IF NOT EXISTS`, so we check pg_database first.
  */
 async function ensureDatabaseExists(databaseUrl: string, workerDbName: string) {
+  // Validate before this reaches any raw SQL — CREATE DATABASE below can't be
+  // parameterized (Postgres has no placeholder support for identifiers), so
+  // the identifier must be provably safe before we interpolate it there.
+  if (!/^[a-zA-Z0-9_]+$/.test(workerDbName)) {
+    throw new Error(`Invalid worker database name: ${workerDbName}`);
+  }
+
   const adminUrl = new URL(databaseUrl);
   adminUrl.pathname = '/postgres';
   adminUrl.searchParams.delete('connection_limit');
@@ -34,9 +41,9 @@ async function ensureDatabaseExists(databaseUrl: string, workerDbName: string) {
 
   const admin = new PrismaClient({datasources: {db: {url: adminUrl.toString()}}});
   try {
-    const rows = await admin.$queryRawUnsafe<{exists: boolean}[]>(
-      `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '${workerDbName}') AS exists`,
-    );
+    const rows = await admin.$queryRaw<{exists: boolean}[]>`
+      SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = ${workerDbName}) AS exists
+    `;
     if (!rows[0]?.exists) {
       await admin.$executeRawUnsafe(`CREATE DATABASE "${workerDbName}"`);
     }
