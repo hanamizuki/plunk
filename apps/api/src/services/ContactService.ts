@@ -446,13 +446,22 @@ export class ContactService {
    * PUBLIC: Subscribe a contact
    */
   public static async subscribe(contactId: string): Promise<Contact> {
+    const existing = await prisma.contact.findUnique({
+      where: {id: contactId},
+      select: {subscribed: true},
+    });
+
     const contact = await prisma.contact.update({
       where: {id: contactId},
       data: {subscribed: true},
     });
 
-    // Track subscription event
-    await EventService.trackEvent(contact.projectId, 'contact.subscribed', contactId);
+    // Track the subscription event only on an actual transition: `contact.subscribed`
+    // doubles as the bounce-history reset marker (see BounceService), so a re-submitted
+    // subscribe action on an already-subscribed contact must not reset strikes.
+    if (existing && !existing.subscribed) {
+      await EventService.trackEvent(contact.projectId, 'contact.subscribed', contactId);
+    }
 
     return contact;
   }

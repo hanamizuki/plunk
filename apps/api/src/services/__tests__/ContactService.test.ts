@@ -517,6 +517,27 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
       });
 
       expect(subscribed?.subscribed).toBe(true);
+
+      const events = await prisma.event.findMany({
+        where: {contactId: contact.id, name: 'contact.subscribed'},
+      });
+      expect(events).toHaveLength(1);
+    });
+
+    it('should not record a subscription event when the contact is already subscribed', async () => {
+      const contact = await factories.createContact({
+        projectId,
+        subscribed: true,
+      });
+
+      await ContactService.subscribe(contact.id);
+
+      // contact.subscribed doubles as the bounce-history reset marker (BounceService),
+      // so a no-op subscribe must not create one
+      const events = await prisma.event.findMany({
+        where: {contactId: contact.id, name: 'contact.subscribed'},
+      });
+      expect(events).toHaveLength(0);
     });
 
     it('should unsubscribe contact', async () => {

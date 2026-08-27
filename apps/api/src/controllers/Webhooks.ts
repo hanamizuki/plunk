@@ -438,8 +438,11 @@ export class Webhooks {
               // switched addresses after this webhook loaded it, the replacement address
               // must not be unsubscribed for the old address's bounce.
               if (bounceIsForCurrentAddress && !staleBounce) {
+                // Optimistic predicate on the snapshot: if the address or the subscription
+                // state changed after this webhook loaded the contact (e.g. a concurrent
+                // recovery), the write becomes a no-op instead of overwriting it.
                 await prisma.contact.updateMany({
-                  where: {id: email.contactId, email: email.contact.email},
+                  where: {id: email.contactId, email: email.contact.email, subscribed: email.contact.subscribed},
                   data: {subscribed: false},
                 });
               } else {
@@ -480,9 +483,9 @@ export class Webhooks {
               updateData.status = EmailStatus.BOUNCED;
               updateData.bouncedAt = now;
               if (bounceIsForCurrentAddress && !staleBounce) {
-                // Same write-time address re-check and staleness rule as the permanent branch
+                // Same write-time address / subscription re-check as the permanent branch
                 await prisma.contact.updateMany({
-                  where: {id: email.contactId, email: email.contact.email},
+                  where: {id: email.contactId, email: email.contact.email, subscribed: email.contact.subscribed},
                   data: {subscribed: false},
                 });
               }
