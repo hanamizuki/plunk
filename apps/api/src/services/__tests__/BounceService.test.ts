@@ -118,6 +118,21 @@ describe('BounceService', () => {
       expect(verdict).toEqual({strike: RELAY_HARD_BOUNCE_STRIKES, threshold: RELAY_HARD_BOUNCE_STRIKES, unsubscribe: true});
     });
 
+    it('resets the count when the contact was re-subscribed after earlier strikes', async () => {
+      const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
+      const now = new Date('2026-08-27T14:00:00Z');
+      for (let i = 1; i < RELAY_HARD_BOUNCE_STRIKES; i++) {
+        await bounceEvent(relay.id, new Date(now.getTime() - (i + 1) * DAY_MS), {bounceType: 'Permanent', relayStrike: i});
+      }
+      await prisma.event.create({
+        data: {projectId, contactId: relay.id, name: 'contact.subscribed', createdAt: new Date(now.getTime() - DAY_MS)},
+      });
+
+      const verdict = await BounceService.evaluateRelayStrike(relay, userNotFound(relay.email), now);
+
+      expect(verdict).toEqual({strike: 1, threshold: RELAY_HARD_BOUNCE_STRIKES, unsubscribe: RELAY_HARD_BOUNCE_STRIKES <= 1});
+    });
+
     it('ignores strikes outside the window and bounces recorded without a strike marker', async () => {
       const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
       const now = new Date('2026-08-27T14:00:00Z');

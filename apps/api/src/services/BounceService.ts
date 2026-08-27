@@ -81,8 +81,9 @@ export class BounceService {
    *
    * Returns `null` when the bounce is not a relay "user not found" bounce (callers fall
    * back to the normal hard-bounce handling). Otherwise returns the strike number:
-   * one strike per distinct UTC day, bounded by RELAY_STRIKE_WINDOW_DAYS. Same-day
-   * repeats (e.g. several workflow emails during one bad hour at Apple) never escalate.
+   * one strike per distinct UTC day, bounded by RELAY_STRIKE_WINDOW_DAYS and reset by a
+   * later `contact.subscribed` event. Same-day repeats (e.g. several workflow emails
+   * during one bad hour at Apple) never escalate.
    */
   public static async evaluateRelayStrike(
     contact: {id: string; email: string},
@@ -94,9 +95,18 @@ export class BounceService {
     }
 
     const windowStart = new Date(now.getTime() - RELAY_STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    // Re-subscribing a contact (dashboard, API, or a manual recovery after a false bounce)
+    // resets the count: strikes recorded before the latest `contact.subscribed` event are ignored.
+    const resubscribed = await prisma.event.findFirst({
+      where: {contactId: contact.id, name: 'contact.subscribed'},
+      orderBy: {createdAt: 'desc'},
+      select: {createdAt: true},
+    });
+    const countFrom = resubscribed && resubscribed.createdAt > windowStart ? resubscribed.createdAt : windowStart;
+
     // Indexed by [contactId, name, createdAt]; a contact only ever has a handful of these.
     const priorBounces = await prisma.event.findMany({
-      where: {contactId: contact.id, name: 'email.bounce', createdAt: {gte: windowStart}},
+      where: {contactId: contact.id, name: 'email.bounce', createdAt: {gte: countFrom}},
       select: {createdAt: true, data: true},
     });
 
