@@ -1,6 +1,7 @@
 import {Controller, Delete, Get, Middleware, Post} from '@overnightjs/core';
 import type {NextFunction, Request, Response} from 'express';
 import signale from 'signale';
+import {ValidationError} from '../exceptions/index.js';
 import {requireAuth, requireEmailVerified} from '../middleware/auth.js';
 import {EventService} from '../services/EventService.js';
 import {CatchAsync} from '../utils/asyncHandler.js';
@@ -20,6 +21,24 @@ export class Events {
 
     if (!name) {
       return res.status(400).json({error: 'Event name is required'});
+    }
+
+    // Reserved system events (email.*, contact.subscribed / contact.unsubscribed) are written
+    // by the platform only — same rule as the public track endpoint. They drive workflows and,
+    // for contact.subscribed, the bounce-history reset in BounceService, so a caller must not
+    // be able to forge them.
+    if (EventService.isReservedEvent(name)) {
+      throw new ValidationError(
+        [
+          {
+            field: 'name',
+            message: `Event name "${name}" is reserved for system use and cannot be manually tracked`,
+            code: 'reserved_event',
+            received: name,
+          },
+        ],
+        'Cannot track reserved system event',
+      );
     }
 
     const event = await EventService.trackEvent(auth.projectId!, name, contactId, emailId, data);
