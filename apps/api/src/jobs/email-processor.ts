@@ -124,6 +124,9 @@ export async function createEmailWorker() {
       // would bounce again on every attempt (transactional templates skip the
       // subscription check, and SES's account-level suppression list is optional).
       // Manual unsubscribes without a bounce on record keep receiving transactional mail.
+      // The check runs on the job's contact snapshot: re-reading the contact here would put
+      // a query on every send to close a millisecond race whose whole cost is one extra
+      // (or one skipped) email — the next attempt sees the settled state either way.
       const recipientOverride =
         email.headers && typeof email.headers === 'object' && !Array.isArray(email.headers)
           ? (email.headers as Record<string, string>)['X-Plunk-Recipient-Override']

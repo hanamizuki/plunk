@@ -192,19 +192,37 @@ describe('BounceService', () => {
         });
       }
 
-      // An SNS notification for a bounce Apple reported 30 days ago, processed only now
+      // A bounce Apple reported 100 days ago shares no 90-day window with the recent strikes
       const delayed = await BounceService.evaluateRelayStrike(
         relay,
         userNotFound(relay.email),
-        new Date(now.getTime() - 30 * DAY_MS),
+        new Date(now.getTime() - 100 * DAY_MS),
       );
 
-      expect(delayed).toEqual({
-        recipient: relay.email,
-        strike: 1,
-        threshold: RELAY_HARD_BOUNCE_STRIKES,
-        unsubscribe: RELAY_HARD_BOUNCE_STRIKES <= 1,
-      });
+      expect(delayed?.strike).toBe(RELAY_HARD_BOUNCE_STRIKES - 1);
+      expect(delayed?.unsubscribe).toBe(false);
+    });
+
+    it('lets a delayed in-window bounce complete the threshold with strikes recorded after it', async () => {
+      const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
+      const now = new Date('2026-08-27T14:00:00Z');
+      for (let i = 1; i < RELAY_HARD_BOUNCE_STRIKES; i++) {
+        await bounceEvent(relay, new Date(now.getTime() - i * DAY_MS), {
+          bounceType: 'Permanent',
+          relayStrike: i,
+          bouncedAt: new Date(now.getTime() - i * DAY_MS).toISOString(),
+        });
+      }
+
+      // A bounce from the day before the recorded strikes, delivered late by SNS
+      const delayed = await BounceService.evaluateRelayStrike(
+        relay,
+        userNotFound(relay.email),
+        new Date(now.getTime() - RELAY_HARD_BOUNCE_STRIKES * DAY_MS),
+      );
+
+      expect(delayed?.strike).toBe(RELAY_HARD_BOUNCE_STRIKES);
+      expect(delayed?.unsubscribe).toBe(true);
     });
 
     it('does not count an SNS redelivery of the same bounce on a later day', async () => {

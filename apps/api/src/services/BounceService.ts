@@ -57,7 +57,7 @@ export interface SesBounce {
 export interface RelayStrikeVerdict {
   /** The relay address this strike belongs to (from the DSN, not the contact record). */
   recipient: string;
-  /** 1-based strike number for this bounce (distinct UTC days inside the window). */
+  /** Distinct strike days known inside the anchored window (including this bounce when it counts). */
   strike: number;
   threshold: number;
   /** True when this bounce reaches the threshold and the contact must be unsubscribed. */
@@ -112,12 +112,12 @@ export class BounceService {
    * Decide how to treat a permanent bounce for a private-relay address.
    *
    * Returns `null` when the bounce is not a relay "user not found" bounce (callers fall
-   * back to the normal hard-bounce handling). Otherwise returns the strike number:
-   * one strike per distinct UTC day of the SES bounce time, bounded by
-   * RELAY_STRIKE_WINDOW_DAYS, scoped to the bounced address and reset by a later
-   * `contact.subscribed` event. Same-day repeats (e.g. several workflow emails during
-   * one bad hour at Apple) never escalate, and a redelivered notification for the same
-   * SES `messageId` never counts twice.
+   * back to the normal hard-bounce handling). Otherwise returns the number of distinct
+   * UTC days (by SES bounce time) with strikes for this address inside one
+   * RELAY_STRIKE_WINDOW_DAYS window anchored at the latest known strike day, after the
+   * latest `contact.subscribed` reset. Same-day repeats (e.g. several workflow emails
+   * during one bad hour at Apple) never escalate, and a redelivered notification for the
+   * same SES `messageId` never counts twice.
    *
    * @param bouncedAt When the bounce happened (the SES bounce timestamp); decides the strike day.
    * @param messageId SES message id of the bounced email, used to ignore SNS redeliveries.
@@ -149,11 +149,8 @@ export class BounceService {
 
     // Distinct strike days are aggregated in the database (index [contactId, name, createdAt]),
     // grouped by the SES bounce time stored on the event (processing time for events that
-    // predate that field), scoped to the bounced address and ignoring a redelivery of the
-    // same SES message. The window / reset cutoff is applied to that same bounce time, so
-    // a notification that SNS delivers late is still attributed to when Apple bounced it,
-    // and only strikes up to this bounce's own time count — a delayed old notification
-    // must not borrow strikes that happened after it. At most one row per day.
+    // predate that field), scoped to the bounced address, ignoring a redelivery of the
+    // same SES message and anything before the reset cutoff. At most one row per day.
     const strikeDays = await prisma.$queryRaw<{day: string}[]>`
       WITH bounces AS (
         SELECT (CASE WHEN data->>'bouncedAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
@@ -170,20 +167,32 @@ export class BounceService {
       SELECT DISTINCT to_char(bounced_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day
       FROM bounces
       WHERE bounced_at >= ${countFrom}
-        AND bounced_at <= ${bouncedAt}
     `;
 
-    // A bounce that Apple reported before the contact was last re-subscribed (or outside the
-    // window) is stale evidence and must not add a strike, however late SNS delivers it.
-    const counts = bouncedAt >= countFrom;
-    const today = toUtcDay(bouncedAt);
-    const priorStrikeDays = strikeDays.filter(row => row.day !== today).length;
-    const strike = priorStrikeDays + (counts ? 1 : 0);
+    // A bounce that Apple reported before the contact was last re-subscribed is stale
+    // evidence and must never flip the contact, however late SNS delivers it.
+    const currentCounts = bouncedAt >= countFrom;
+    const currentDay = toUtcDay(bouncedAt);
+    const knownDays = new Set(strikeDays.map(row => row.day));
+    if (currentCounts) {
+      knownDays.add(currentDay);
+    }
+
+    // Threshold semantics: RELAY_HARD_BOUNCE_STRIKES distinct days inside one window of
+    // RELAY_STRIKE_WINDOW_DAYS. The window is anchored at the LATEST known strike day
+    // because notifications arrive out of order in both directions: a bounce from far
+    // outside the window must not borrow newer strikes, while a delayed in-window bounce
+    // must still be able to complete the threshold together with strikes recorded after it.
+    const latestDay = knownDays.size > 0 ? [...knownDays].sort().slice(-1)[0] : currentDay;
+    const windowFloorDay = toUtcDay(
+      new Date(Date.parse(`${latestDay}T00:00:00Z`) - RELAY_STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000),
+    );
+    const strike = [...knownDays].filter(day => day >= windowFloorDay).length;
     return {
       recipient,
       strike,
       threshold: RELAY_HARD_BOUNCE_STRIKES,
-      unsubscribe: counts && strike >= RELAY_HARD_BOUNCE_STRIKES,
+      unsubscribe: currentCounts && strike >= RELAY_HARD_BOUNCE_STRIKES,
     };
   }
 
