@@ -140,12 +140,8 @@ export class BounceService {
     // `bulkSubscribe` records events after returning, so a bounce landing inside that brief
     // window can still see pre-recovery strikes — accepted: the contact can simply be
     // recovered again, and making bulk event writes synchronous would stall large batches.
-    const resubscribed = await prisma.event.findFirst({
-      where: {contactId: contact.id, name: 'contact.subscribed'},
-      orderBy: {createdAt: 'desc'},
-      select: {createdAt: true},
-    });
-    const countFrom = resubscribed && resubscribed.createdAt > windowStart ? resubscribed.createdAt : windowStart;
+    const resubscribedAt = await this.lastResubscribedAt(contact.id);
+    const countFrom = resubscribedAt && resubscribedAt > windowStart ? resubscribedAt : windowStart;
 
     // Distinct strike days are aggregated in the database (index [contactId, name, createdAt]),
     // grouped by the SES bounce time stored on the event (processing time for events that
@@ -252,6 +248,19 @@ export class BounceService {
   }
 
   /**
+   * When the contact was last re-subscribed (dashboard, API, workflow or an operator
+   * recovery) — the reset point for bounce history. `null` when it never happened.
+   */
+  public static async lastResubscribedAt(contactId: string): Promise<Date | null> {
+    const resubscribed = await prisma.event.findFirst({
+      where: {contactId, name: 'contact.subscribed'},
+      orderBy: {createdAt: 'desc'},
+      select: {createdAt: true},
+    });
+    return resubscribed?.createdAt ?? null;
+  }
+
+  /**
    * True when the contact was unsubscribed by a hard bounce. Such addresses must not be
    * handed to SES again — every attempt is a guaranteed bounce that only hurts sender
    * reputation. Contacts that unsubscribed manually (no hard bounce on record) are not
@@ -270,11 +279,7 @@ export class BounceService {
     if (contact.subscribed) {
       return false;
     }
-    const resubscribed = await prisma.event.findFirst({
-      where: {contactId: contact.id, name: 'contact.subscribed'},
-      orderBy: {createdAt: 'desc'},
-      select: {createdAt: true},
-    });
+    const resubscribedAt = await this.lastResubscribedAt(contact.id);
     // Same effective bounce time as the strike query: a bounce Apple reported before the
     // contact was last re-subscribed does not count, however late SNS delivered it.
     const causalBounce = await prisma.$queryRaw<{found: number}[]>`
@@ -284,7 +289,7 @@ export class BounceService {
         AND name = 'email.bounce'
         AND (CASE WHEN data->>'bouncedAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
                   THEN (data->>'bouncedAt')::timestamptz
-                  ELSE "createdAt" AT TIME ZONE 'UTC' END) > ${resubscribed?.createdAt ?? new Date(0)}
+                  ELSE "createdAt" AT TIME ZONE 'UTC' END) > ${resubscribedAt ?? new Date(0)}
         AND (data->>'recipient' IS NULL OR lower(data->>'recipient') = ${contact.email.toLowerCase()})
         AND (CASE WHEN jsonb_typeof(data->'unsubscribed') = 'boolean'
                   THEN (data->>'unsubscribed')::boolean

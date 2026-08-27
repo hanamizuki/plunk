@@ -403,6 +403,13 @@ export class Webhooks {
               ? await BounceService.evaluateRelayStrike(email.contact, body.bounce, bouncedAt, email.messageId)
               : null;
 
+            // A bounce Apple reported before the contact was last re-subscribed must not flip
+            // the contact, however late SNS delivers it — the same reset rule the strike
+            // counter and the worker gate use, so the recorded `unsubscribed` marker and the
+            // actual subscription state always agree.
+            const resubscribedAt = isTransientBounce ? null : await BounceService.lastResubscribedAt(email.contactId);
+            const staleBounce = resubscribedAt !== null && bouncedAt <= resubscribedAt;
+
             if (relayStrike && !relayStrike.unsubscribe) {
               signale.warn(
                 `[WEBHOOK] Private-relay hard bounce for contact ${email.contactId} from ${email.project.name} (strike ${relayStrike.strike}/${relayStrike.threshold}) - keeping contact subscribed`,
@@ -425,18 +432,19 @@ export class Webhooks {
               signale.warn(`[WEBHOOK] Permanent bounce received for ${email.contact.email} from ${email.project.name}`);
               updateData.status = EmailStatus.BOUNCED;
               updateData.bouncedAt = now;
-              // Unsubscribe contact on permanent bounce (of the address it currently uses).
+              // Unsubscribe contact on permanent bounce (of the address it currently uses,
+              // and only when the bounce postdates the latest re-subscription).
               // The email predicate re-checks the address at write time: if the contact
               // switched addresses after this webhook loaded it, the replacement address
               // must not be unsubscribed for the old address's bounce.
-              if (bounceIsForCurrentAddress) {
+              if (bounceIsForCurrentAddress && !staleBounce) {
                 await prisma.contact.updateMany({
                   where: {id: email.contactId, email: email.contact.email},
                   data: {subscribed: false},
                 });
               } else {
                 signale.info(
-                  `[WEBHOOK] Permanent bounce for a previous address of contact ${email.contactId} - keeping current address subscribed`,
+                  `[WEBHOOK] Permanent bounce for contact ${email.contactId} ${staleBounce ? 'predates its re-subscription' : 'is for a previous address'} - keeping contact subscribed`,
                 );
               }
               eventData = {
@@ -446,7 +454,7 @@ export class Webhooks {
                 bounceSubType,
                 bouncedAt: bouncedAt.toISOString(),
                 ...(relayStrike ? {relayStrike: relayStrike.strike, relayStrikeThreshold: relayStrike.threshold} : {}),
-                unsubscribed: bounceIsForCurrentAddress,
+                unsubscribed: bounceIsForCurrentAddress && !staleBounce,
               };
 
               // Send notification about permanent bounce
@@ -471,8 +479,8 @@ export class Webhooks {
               );
               updateData.status = EmailStatus.BOUNCED;
               updateData.bouncedAt = now;
-              if (bounceIsForCurrentAddress) {
-                // Same write-time address re-check as the permanent branch
+              if (bounceIsForCurrentAddress && !staleBounce) {
+                // Same write-time address re-check and staleness rule as the permanent branch
                 await prisma.contact.updateMany({
                   where: {id: email.contactId, email: email.contact.email},
                   data: {subscribed: false},
@@ -484,7 +492,7 @@ export class Webhooks {
                 bounceType,
                 bounceSubType,
                 bouncedAt: bouncedAt.toISOString(),
-                unsubscribed: bounceIsForCurrentAddress,
+                unsubscribed: bounceIsForCurrentAddress && !staleBounce,
               };
 
               await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
