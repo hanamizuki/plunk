@@ -1,6 +1,7 @@
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 
 import {RELAY_HARD_BOUNCE_STRIKES} from '../../app/constants';
+import {redis} from '../../database/redis';
 import {BounceService, RELAY_STRIKE_WINDOW_DAYS} from '../BounceService';
 import type {SesBounce} from '../BounceService';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
@@ -326,6 +327,18 @@ describe('BounceService', () => {
       expect(log[0].split(':')[0]).toBe(log[1].split(':')[0]);
       expect(log[1]).toMatch(/:end$/);
       expect(log[2]).toMatch(/:start$/);
+    });
+  });
+
+  describe('withRelayStrikeLock (Redis unavailable)', () => {
+    it('still runs the work when the lock cannot be acquired because Redis fails', async () => {
+      const setSpy = vi.spyOn(redis, 'set').mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      try {
+        const result = await BounceService.withRelayStrikeLock('abc123@privaterelay.appleid.com', async () => 'done');
+        expect(result).toBe('done');
+      } finally {
+        setSpy.mockRestore();
+      }
     });
   });
 

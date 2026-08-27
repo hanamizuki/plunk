@@ -190,32 +190,51 @@ export class BounceService {
    * only be unsubscribed by a later bounce. The lock spans evaluating the strike and
    * recording its event.
    *
-   * Fail-open: when the lock cannot be obtained within STRIKE_LOCK_WAIT_MS the work runs
-   * anyway — a strike counted late is better than a bounce that is never recorded.
+   * Fail-open: when the lock cannot be obtained within STRIKE_LOCK_WAIT_MS, or Redis is
+   * unavailable, the work runs anyway — a strike counted late is better than a bounce that
+   * is never recorded (the webhook acknowledges the SNS message either way).
    */
   public static async withRelayStrikeLock<T>(recipient: string, fn: () => Promise<T>): Promise<T> {
     const key = `bounce:relay-strike-lock:${recipient.trim().toLowerCase()}`;
     const token = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const deadline = Date.now() + STRIKE_LOCK_WAIT_MS;
 
-    while ((await redis.set(key, token, 'PX', STRIKE_LOCK_TTL_MS, 'NX')) !== 'OK') {
-      if (Date.now() >= deadline) {
-        signale.warn(`[BOUNCE] Relay strike lock not acquired within ${STRIKE_LOCK_WAIT_MS}ms, proceeding without it`);
-        return fn();
+    let acquired = false;
+    try {
+      while (Date.now() < deadline) {
+        if ((await redis.set(key, token, 'PX', STRIKE_LOCK_TTL_MS, 'NX')) === 'OK') {
+          acquired = true;
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50 + Math.floor(Math.random() * 50)));
       }
-      await new Promise(resolve => setTimeout(resolve, 50 + Math.floor(Math.random() * 50)));
+      if (!acquired) {
+        signale.warn(`[BOUNCE] Relay strike lock not acquired within ${STRIKE_LOCK_WAIT_MS}ms, proceeding without it`);
+      }
+    } catch (error) {
+      signale.warn('[BOUNCE] Relay strike lock unavailable (Redis error), proceeding without it:', error);
+      acquired = false;
+    }
+
+    if (!acquired) {
+      return fn();
     }
 
     try {
       return await fn();
     } finally {
-      // Release only if the lock is still ours (it may have expired and been re-acquired)
-      await redis.eval(
-        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-        1,
-        key,
-        token,
-      );
+      // Release only if the lock is still ours (it may have expired and been re-acquired).
+      // A failed release is harmless: the key expires on its own after STRIKE_LOCK_TTL_MS.
+      try {
+        await redis.eval(
+          "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+          1,
+          key,
+          token,
+        );
+      } catch (error) {
+        signale.warn('[BOUNCE] Failed to release relay strike lock (it expires on its own):', error);
+      }
     }
   }
 
