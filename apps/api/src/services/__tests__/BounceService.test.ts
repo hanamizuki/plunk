@@ -151,6 +151,35 @@ describe('BounceService', () => {
       expect(verdict?.strike).toBe(2);
     });
 
+    it('ignores bounces Apple reported before the last re-subscription, however late SNS delivers them', async () => {
+      const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
+      const now = new Date('2026-08-27T14:00:00Z');
+      await prisma.event.create({
+        data: {projectId, contactId: relay.id, name: 'contact.subscribed', createdAt: new Date(now.getTime() - DAY_MS)},
+      });
+      // Processed after the recovery, but Apple bounced it two days before it
+      await bounceEvent(relay, new Date(now.getTime() - 60_000), {
+        bounceType: 'Permanent',
+        relayStrike: 1,
+        bouncedAt: new Date(now.getTime() - 2 * DAY_MS).toISOString(),
+      });
+
+      const fresh = await BounceService.evaluateRelayStrike(relay, userNotFound(relay.email), now);
+      const stale = await BounceService.evaluateRelayStrike(
+        relay,
+        userNotFound(relay.email),
+        new Date(now.getTime() - 2 * DAY_MS),
+      );
+
+      expect(fresh?.strike).toBe(1);
+      expect(stale).toEqual({
+        recipient: relay.email,
+        strike: 0,
+        threshold: RELAY_HARD_BOUNCE_STRIKES,
+        unsubscribe: false,
+      });
+    });
+
     it('does not count an SNS redelivery of the same bounce on a later day', async () => {
       const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
       const firstDelivery = new Date('2026-08-26T23:59:00Z');
@@ -251,6 +280,26 @@ describe('BounceService', () => {
       const verdict = await BounceService.evaluateRelayStrike(relay, userNotFound(relay.email), now);
 
       expect(verdict?.strike).toBe(1);
+    });
+  });
+
+  describe('withRelayStrikeLock', () => {
+    it('serializes concurrent work for the same address', async () => {
+      const log: string[] = [];
+      const work = (name: string) =>
+        BounceService.withRelayStrikeLock('abc123@privaterelay.appleid.com', async () => {
+          log.push(`${name}:start`);
+          await new Promise(resolve => setTimeout(resolve, 60));
+          log.push(`${name}:end`);
+        });
+
+      await Promise.all([work('a'), work('b')]);
+
+      // Whichever runs first must finish before the other starts
+      expect(log).toHaveLength(4);
+      expect(log[0].split(':')[0]).toBe(log[1].split(':')[0]);
+      expect(log[1]).toMatch(/:end$/);
+      expect(log[2]).toMatch(/:start$/);
     });
   });
 

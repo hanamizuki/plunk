@@ -324,6 +324,8 @@ export class Webhooks {
         sourceType: email.sourceType,
       };
       let eventData: Record<string, unknown> = baseEventData;
+      // Set by handlers that persist the email update and the event themselves
+      let persisted = false;
 
       // Process event based on type
       switch (eventType) {
@@ -385,88 +387,104 @@ export class Webhooks {
           const bouncedAt = Number.isNaN(sesBouncedAt.getTime()) ? now : sesBouncedAt;
           const bouncedAddress = BounceService.bouncedAddress(body.bounce, email.contact.email);
 
-          // Apple private-relay addresses intermittently hard-bounce with "5.1.1 user not
-          // found" although they are valid, so a single hard bounce must not unsubscribe
-          // the contact. Strikes are counted per distinct day of the SES bounce timestamp
-          // and deduplicated by messageId, so an SNS redelivery never adds a strike.
-          const relayStrike = isPermanentBounce
-            ? await BounceService.evaluateRelayStrike(email.contact, body.bounce, bouncedAt, email.messageId)
-            : null;
+          // Evaluate, decide and persist inside one critical section per bounced address:
+          // SNS may deliver several notifications for the same address concurrently, and
+          // each must see the strike recorded by the previous one.
+          const handleBounce = async () => {
+            // Apple private-relay addresses intermittently hard-bounce with "5.1.1 user not
+            // found" although they are valid, so a single hard bounce must not unsubscribe
+            // the contact. Strikes are counted per distinct day of the SES bounce timestamp
+            // and deduplicated by messageId, so an SNS redelivery never adds a strike.
+            const relayStrike = isPermanentBounce
+              ? await BounceService.evaluateRelayStrike(email.contact, body.bounce, bouncedAt, email.messageId)
+              : null;
 
-          if (relayStrike && !relayStrike.unsubscribe) {
-            signale.warn(
-              `[WEBHOOK] Private-relay hard bounce for contact ${email.contactId} from ${email.project.name} (strike ${relayStrike.strike}/${relayStrike.threshold}) - keeping contact subscribed`,
-            );
-            // The email did bounce; only the contact-level consequence is deferred
-            updateData.status = EmailStatus.BOUNCED;
-            updateData.bouncedAt = now;
-            eventData = {
-              ...baseEventData,
-              recipient: bouncedAddress,
-              bounceType,
-              bounceSubType,
-              bouncedAt: bouncedAt.toISOString(),
-              relayStrike: relayStrike.strike,
-              relayStrikeThreshold: relayStrike.threshold,
-              unsubscribed: false,
-            };
-          } else if (isPermanentBounce) {
-            // Hard bounce - counts toward bounce rate and unsubscribes contact
-            signale.warn(`[WEBHOOK] Permanent bounce received for ${email.contact.email} from ${email.project.name}`);
-            updateData.status = EmailStatus.BOUNCED;
-            updateData.bouncedAt = now;
-            // Unsubscribe contact on permanent bounce
-            await prisma.contact.update({
-              where: {id: email.contactId},
-              data: {subscribed: false},
-            });
-            eventData = {
-              ...baseEventData,
-              recipient: bouncedAddress,
-              bounceType,
-              bounceSubType,
-              bouncedAt: bouncedAt.toISOString(),
-              ...(relayStrike ? {relayStrike: relayStrike.strike, relayStrikeThreshold: relayStrike.threshold} : {}),
-              unsubscribed: true,
-            };
+            if (relayStrike && !relayStrike.unsubscribe) {
+              signale.warn(
+                `[WEBHOOK] Private-relay hard bounce for contact ${email.contactId} from ${email.project.name} (strike ${relayStrike.strike}/${relayStrike.threshold}) - keeping contact subscribed`,
+              );
+              // The email did bounce; only the contact-level consequence is deferred
+              updateData.status = EmailStatus.BOUNCED;
+              updateData.bouncedAt = now;
+              eventData = {
+                ...baseEventData,
+                recipient: bouncedAddress,
+                bounceType,
+                bounceSubType,
+                bouncedAt: bouncedAt.toISOString(),
+                relayStrike: relayStrike.strike,
+                relayStrikeThreshold: relayStrike.threshold,
+                unsubscribed: false,
+              };
+            } else if (isPermanentBounce) {
+              // Hard bounce - counts toward bounce rate and unsubscribes contact
+              signale.warn(`[WEBHOOK] Permanent bounce received for ${email.contact.email} from ${email.project.name}`);
+              updateData.status = EmailStatus.BOUNCED;
+              updateData.bouncedAt = now;
+              // Unsubscribe contact on permanent bounce
+              await prisma.contact.update({
+                where: {id: email.contactId},
+                data: {subscribed: false},
+              });
+              eventData = {
+                ...baseEventData,
+                recipient: bouncedAddress,
+                bounceType,
+                bounceSubType,
+                bouncedAt: bouncedAt.toISOString(),
+                ...(relayStrike ? {relayStrike: relayStrike.strike, relayStrikeThreshold: relayStrike.threshold} : {}),
+                unsubscribed: true,
+              };
 
-            // Send notification about permanent bounce
-            await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
-          } else if (isTransientBounce) {
-            // Soft bounce (e.g., out-of-office, mailbox full) - don't count toward bounce rate
-            signale.info(
-              `[WEBHOOK] Transient bounce received for ${email.contact.email} from ${email.project.name} (not counted toward bounce rate)`,
-            );
-            // Don't update email status or unsubscribe contact
-            // Just track the event for visibility
-            eventData = {
-              ...baseEventData,
-              bounceType,
-              bounceSubType,
-              transientBounce: true,
-            };
+              // Send notification about permanent bounce
+              await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+            } else if (isTransientBounce) {
+              // Soft bounce (e.g., out-of-office, mailbox full) - don't count toward bounce rate
+              signale.info(
+                `[WEBHOOK] Transient bounce received for ${email.contact.email} from ${email.project.name} (not counted toward bounce rate)`,
+              );
+              // Don't update email status or unsubscribe contact
+              // Just track the event for visibility
+              eventData = {
+                ...baseEventData,
+                bounceType,
+                bounceSubType,
+                transientBounce: true,
+              };
+            } else {
+              // Unknown bounce type - treat as permanent to be safe
+              signale.warn(
+                `[WEBHOOK] Unknown bounce type (${bounceType}) received for ${email.contact.email} from ${email.project.name} - treating as permanent`,
+              );
+              updateData.status = EmailStatus.BOUNCED;
+              updateData.bouncedAt = now;
+              await prisma.contact.update({
+                where: {id: email.contactId},
+                data: {subscribed: false},
+              });
+              eventData = {
+                ...baseEventData,
+                recipient: bouncedAddress,
+                bounceType,
+                bounceSubType,
+                bouncedAt: bouncedAt.toISOString(),
+                unsubscribed: true,
+              };
+
+              await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+            }
+
+            await prisma.email.update({where: {id: email.id}, data: updateData});
+            // Track event (this will trigger workflows)
+            await EventService.trackEvent(email.projectId, eventName, email.contactId, email.id, eventData);
+          };
+
+          if (isPermanentBounce && BounceService.isPrivateRelayAddress(bouncedAddress)) {
+            await BounceService.withRelayStrikeLock(bouncedAddress, handleBounce);
           } else {
-            // Unknown bounce type - treat as permanent to be safe
-            signale.warn(
-              `[WEBHOOK] Unknown bounce type (${bounceType}) received for ${email.contact.email} from ${email.project.name} - treating as permanent`,
-            );
-            updateData.status = EmailStatus.BOUNCED;
-            updateData.bouncedAt = now;
-            await prisma.contact.update({
-              where: {id: email.contactId},
-              data: {subscribed: false},
-            });
-            eventData = {
-              ...baseEventData,
-              recipient: bouncedAddress,
-              bounceType,
-              bounceSubType,
-              bouncedAt: bouncedAt.toISOString(),
-              unsubscribed: true,
-            };
-
-            await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+            await handleBounce();
           }
+          persisted = true;
           break;
         }
 
@@ -493,14 +511,16 @@ export class Webhooks {
           return res.status(200).json({success: true});
       }
 
-      // Update email with new status and timestamps
-      await prisma.email.update({
-        where: {id: email.id},
-        data: updateData,
-      });
+      if (!persisted) {
+        // Update email with new status and timestamps
+        await prisma.email.update({
+          where: {id: email.id},
+          data: updateData,
+        });
 
-      // Track event (this will trigger workflows)
-      await EventService.trackEvent(email.projectId, eventName, email.contactId, email.id, eventData);
+        // Track event (this will trigger workflows)
+        await EventService.trackEvent(email.projectId, eventName, email.contactId, email.id, eventData);
+      }
 
       // Check security limits only for permanent bounces and complaints
       // Transient bounces (soft bounces) don't count toward bounce rate

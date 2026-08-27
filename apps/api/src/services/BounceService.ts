@@ -15,8 +15,11 @@
  * count as strikes.
  */
 
+import signale from 'signale';
+
 import {RELAY_HARD_BOUNCE_STRIKES} from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
+import {redis} from '../database/redis.js';
 
 /**
  * Domains used by Apple's private email relay. Apple announced on 2026-08-24 that newly
@@ -27,6 +30,11 @@ export const PRIVATE_RELAY_DOMAINS: readonly string[] = ['privaterelay.appleid.c
 
 /** Only relay bounces inside this window count as strikes. */
 export const RELAY_STRIKE_WINDOW_DAYS = 90;
+
+/** How long a per-address strike lock may be held (a webhook call takes well under a second). */
+const STRIKE_LOCK_TTL_MS = 10_000;
+/** How long a webhook call waits for the lock before proceeding without it. */
+const STRIKE_LOCK_WAIT_MS = 5_000;
 
 /** The subset of the SES `bounce` notification object we rely on. */
 export interface SesBouncedRecipient {
@@ -138,27 +146,75 @@ export class BounceService {
     // Distinct strike days are aggregated in the database (index [contactId, name, createdAt]),
     // grouped by the SES bounce time stored on the event (processing time for events that
     // predate that field), scoped to the bounced address and ignoring a redelivery of the
-    // same SES message. The result is at most one row per day inside the window.
+    // same SES message. The window / reset cutoff is applied to that same bounce time, so
+    // a notification that SNS delivers late is still attributed to when Apple bounced it.
+    // The result is at most one row per day inside the window.
     const strikeDays = await prisma.$queryRaw<{day: string}[]>`
-      SELECT DISTINCT to_char(
-        (CASE WHEN data->>'bouncedAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
-              THEN (data->>'bouncedAt')::timestamptz
-              ELSE "createdAt" AT TIME ZONE 'UTC' END) AT TIME ZONE 'UTC',
-        'YYYY-MM-DD'
-      ) AS day
-      FROM events
-      WHERE "contactId" = ${contact.id}
-        AND name = 'email.bounce'
-        AND "createdAt" >= ${countFrom}
-        AND jsonb_typeof(data->'relayStrike') = 'number'
-        AND lower(data->>'recipient') = ${recipient.toLowerCase()}
-        AND (${messageId ?? null}::text IS NULL OR data->>'messageId' IS DISTINCT FROM ${messageId ?? null}::text)
+      WITH bounces AS (
+        SELECT (CASE WHEN data->>'bouncedAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
+                     THEN (data->>'bouncedAt')::timestamptz
+                     ELSE "createdAt" AT TIME ZONE 'UTC' END) AS bounced_at
+        FROM events
+        WHERE "contactId" = ${contact.id}
+          AND name = 'email.bounce'
+          AND "createdAt" >= ${windowStart}
+          AND jsonb_typeof(data->'relayStrike') = 'number'
+          AND lower(data->>'recipient') = ${recipient.toLowerCase()}
+          AND (${messageId ?? null}::text IS NULL OR data->>'messageId' IS DISTINCT FROM ${messageId ?? null}::text)
+      )
+      SELECT DISTINCT to_char(bounced_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day
+      FROM bounces
+      WHERE bounced_at >= ${countFrom}
     `;
 
+    // A bounce that Apple reported before the contact was last re-subscribed (or outside the
+    // window) is stale evidence and must not add a strike, however late SNS delivers it.
+    const counts = bouncedAt >= countFrom;
     const today = toUtcDay(bouncedAt);
     const priorStrikeDays = strikeDays.filter(row => row.day !== today).length;
-    const strike = priorStrikeDays + 1;
-    return {recipient, strike, threshold: RELAY_HARD_BOUNCE_STRIKES, unsubscribe: strike >= RELAY_HARD_BOUNCE_STRIKES};
+    const strike = priorStrikeDays + (counts ? 1 : 0);
+    return {
+      recipient,
+      strike,
+      threshold: RELAY_HARD_BOUNCE_STRIKES,
+      unsubscribe: counts && strike >= RELAY_HARD_BOUNCE_STRIKES,
+    };
+  }
+
+  /**
+   * Run `fn` while holding a short lock on the bounced address. SNS can deliver several
+   * bounce notifications for one address concurrently; without serialization each of them
+   * would read the same strike history, all stay below the threshold and the contact would
+   * only be unsubscribed by a later bounce. The lock spans evaluating the strike and
+   * recording its event.
+   *
+   * Fail-open: when the lock cannot be obtained within STRIKE_LOCK_WAIT_MS the work runs
+   * anyway — a strike counted late is better than a bounce that is never recorded.
+   */
+  public static async withRelayStrikeLock<T>(recipient: string, fn: () => Promise<T>): Promise<T> {
+    const key = `bounce:relay-strike-lock:${recipient.trim().toLowerCase()}`;
+    const token = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const deadline = Date.now() + STRIKE_LOCK_WAIT_MS;
+
+    while ((await redis.set(key, token, 'PX', STRIKE_LOCK_TTL_MS, 'NX')) !== 'OK') {
+      if (Date.now() >= deadline) {
+        signale.warn(`[BOUNCE] Relay strike lock not acquired within ${STRIKE_LOCK_WAIT_MS}ms, proceeding without it`);
+        return fn();
+      }
+      await new Promise(resolve => setTimeout(resolve, 50 + Math.floor(Math.random() * 50)));
+    }
+
+    try {
+      return await fn();
+    } finally {
+      // Release only if the lock is still ours (it may have expired and been re-acquired)
+      await redis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        1,
+        key,
+        token,
+      );
+    }
   }
 
   /**
@@ -185,12 +241,16 @@ export class BounceService {
       orderBy: {createdAt: 'desc'},
       select: {createdAt: true},
     });
+    // Same effective bounce time as the strike query: a bounce Apple reported before the
+    // contact was last re-subscribed does not count, however late SNS delivered it.
     const causalBounce = await prisma.$queryRaw<{found: number}[]>`
       SELECT 1 AS found
       FROM events
       WHERE "contactId" = ${contact.id}
         AND name = 'email.bounce'
-        AND "createdAt" > ${resubscribed?.createdAt ?? new Date(0)}
+        AND (CASE WHEN data->>'bouncedAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
+                  THEN (data->>'bouncedAt')::timestamptz
+                  ELSE "createdAt" AT TIME ZONE 'UTC' END) > ${resubscribed?.createdAt ?? new Date(0)}
         AND (data->>'recipient' IS NULL OR lower(data->>'recipient') = ${contact.email.toLowerCase()})
         AND (CASE WHEN jsonb_typeof(data->'unsubscribed') = 'boolean'
                   THEN (data->>'unsubscribed')::boolean
