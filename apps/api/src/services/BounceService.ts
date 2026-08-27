@@ -147,8 +147,9 @@ export class BounceService {
     // grouped by the SES bounce time stored on the event (processing time for events that
     // predate that field), scoped to the bounced address and ignoring a redelivery of the
     // same SES message. The window / reset cutoff is applied to that same bounce time, so
-    // a notification that SNS delivers late is still attributed to when Apple bounced it.
-    // The result is at most one row per day inside the window.
+    // a notification that SNS delivers late is still attributed to when Apple bounced it,
+    // and only strikes up to this bounce's own time count — a delayed old notification
+    // must not borrow strikes that happened after it. At most one row per day.
     const strikeDays = await prisma.$queryRaw<{day: string}[]>`
       WITH bounces AS (
         SELECT (CASE WHEN data->>'bouncedAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
@@ -165,6 +166,7 @@ export class BounceService {
       SELECT DISTINCT to_char(bounced_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day
       FROM bounces
       WHERE bounced_at >= ${countFrom}
+        AND bounced_at <= ${bouncedAt}
     `;
 
     // A bounce that Apple reported before the contact was last re-subscribed (or outside the

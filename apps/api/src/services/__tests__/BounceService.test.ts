@@ -180,6 +180,32 @@ describe('BounceService', () => {
       });
     });
 
+    it('does not let a delayed old bounce borrow strikes that happened after it', async () => {
+      const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
+      const now = new Date('2026-08-27T14:00:00Z');
+      for (let i = 1; i < RELAY_HARD_BOUNCE_STRIKES; i++) {
+        await bounceEvent(relay, new Date(now.getTime() - i * DAY_MS), {
+          bounceType: 'Permanent',
+          relayStrike: i,
+          bouncedAt: new Date(now.getTime() - i * DAY_MS).toISOString(),
+        });
+      }
+
+      // An SNS notification for a bounce Apple reported 30 days ago, processed only now
+      const delayed = await BounceService.evaluateRelayStrike(
+        relay,
+        userNotFound(relay.email),
+        new Date(now.getTime() - 30 * DAY_MS),
+      );
+
+      expect(delayed).toEqual({
+        recipient: relay.email,
+        strike: 1,
+        threshold: RELAY_HARD_BOUNCE_STRIKES,
+        unsubscribe: RELAY_HARD_BOUNCE_STRIKES <= 1,
+      });
+    });
+
     it('does not count an SNS redelivery of the same bounce on a later day', async () => {
       const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
       const firstDelivery = new Date('2026-08-26T23:59:00Z');

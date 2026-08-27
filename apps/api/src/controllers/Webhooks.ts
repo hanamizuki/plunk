@@ -386,6 +386,10 @@ export class Webhooks {
           const sesBouncedAt = body.bounce?.timestamp ? new Date(body.bounce.timestamp) : now;
           const bouncedAt = Number.isNaN(sesBouncedAt.getTime()) ? now : sesBouncedAt;
           const bouncedAddress = BounceService.bouncedAddress(body.bounce, email.contact.email);
+          // Only the address that bounced loses its subscription: a delayed bounce for a
+          // previous address (or for an X-Plunk-Recipient-Override recipient) must not
+          // silence the address the contact uses now.
+          const bounceIsForCurrentAddress = bouncedAddress.toLowerCase() === email.contact.email.trim().toLowerCase();
 
           // Evaluate, decide and persist inside one critical section per bounced address:
           // SNS may deliver several notifications for the same address concurrently, and
@@ -421,11 +425,17 @@ export class Webhooks {
               signale.warn(`[WEBHOOK] Permanent bounce received for ${email.contact.email} from ${email.project.name}`);
               updateData.status = EmailStatus.BOUNCED;
               updateData.bouncedAt = now;
-              // Unsubscribe contact on permanent bounce
-              await prisma.contact.update({
-                where: {id: email.contactId},
-                data: {subscribed: false},
-              });
+              // Unsubscribe contact on permanent bounce (of the address it currently uses)
+              if (bounceIsForCurrentAddress) {
+                await prisma.contact.update({
+                  where: {id: email.contactId},
+                  data: {subscribed: false},
+                });
+              } else {
+                signale.info(
+                  `[WEBHOOK] Permanent bounce for a previous address of contact ${email.contactId} - keeping current address subscribed`,
+                );
+              }
               eventData = {
                 ...baseEventData,
                 recipient: bouncedAddress,
@@ -433,7 +443,7 @@ export class Webhooks {
                 bounceSubType,
                 bouncedAt: bouncedAt.toISOString(),
                 ...(relayStrike ? {relayStrike: relayStrike.strike, relayStrikeThreshold: relayStrike.threshold} : {}),
-                unsubscribed: true,
+                unsubscribed: bounceIsForCurrentAddress,
               };
 
               // Send notification about permanent bounce
@@ -458,17 +468,19 @@ export class Webhooks {
               );
               updateData.status = EmailStatus.BOUNCED;
               updateData.bouncedAt = now;
-              await prisma.contact.update({
-                where: {id: email.contactId},
-                data: {subscribed: false},
-              });
+              if (bounceIsForCurrentAddress) {
+                await prisma.contact.update({
+                  where: {id: email.contactId},
+                  data: {subscribed: false},
+                });
+              }
               eventData = {
                 ...baseEventData,
                 recipient: bouncedAddress,
                 bounceType,
                 bounceSubType,
                 bouncedAt: bouncedAt.toISOString(),
-                unsubscribed: true,
+                unsubscribed: bounceIsForCurrentAddress,
               };
 
               await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
