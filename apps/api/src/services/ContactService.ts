@@ -1,6 +1,7 @@
 import {type Contact, Prisma} from '@plunk/db';
 import type {CursorPaginatedResponse, FilterCondition, FilterGroup} from '@plunk/types';
 import {toPrismaJson} from '@plunk/types';
+import signale from 'signale';
 
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
@@ -230,26 +231,39 @@ export class ContactService {
         throw new HttpException(400, 'data must be an object');
       }
     }
-    if (data.subscribed !== undefined) {
-      updateData.subscribed = data.subscribed;
-    }
-
-    // Track subscription status change
-    const isSubscriptionChanging = data.subscribed !== undefined && existing.subscribed !== data.subscribed;
-    const wasSubscribed = existing.subscribed;
-
     try {
-      const updated = await prisma.contact.update({
-        where: {id: contactId},
-        data: updateData,
+      // The subscription events double as bounce-history reset markers (see BounceService),
+      // so a transition must never commit without its event — state and event are written
+      // in one transaction, and the transition itself is detected by a conditional update
+      // INSIDE the transaction (a pre-read snapshot could race a concurrent flip).
+      // Workflow side effects fire afterwards (best-effort).
+      const {updated, transitionEvent} = await prisma.$transaction(async tx => {
+        let subscriptionEvent: 'contact.subscribed' | 'contact.unsubscribed' | null = null;
+        if (data.subscribed !== undefined) {
+          const flip = await tx.contact.updateMany({
+            where: {id: contactId, subscribed: !data.subscribed},
+            data: {subscribed: data.subscribed},
+          });
+          if (flip.count > 0) {
+            subscriptionEvent = data.subscribed ? 'contact.subscribed' : 'contact.unsubscribed';
+          }
+        }
+
+        const updatedContact = await tx.contact.update({
+          where: {id: contactId},
+          data: updateData,
+        });
+        if (subscriptionEvent) {
+          await tx.event.create({data: {projectId, contactId, name: subscriptionEvent}});
+        }
+        return {updated: updatedContact, transitionEvent: subscriptionEvent};
       });
 
-      // Track subscription event if status changed
-      if (isSubscriptionChanging) {
-        if (data.subscribed && !wasSubscribed) {
-          await EventService.trackEvent(projectId, 'contact.subscribed', contactId);
-        } else if (!data.subscribed && wasSubscribed) {
-          await EventService.trackEvent(projectId, 'contact.unsubscribed', contactId);
+      if (transitionEvent) {
+        try {
+          await EventService.dispatchEvent(projectId, transitionEvent, contactId);
+        } catch (dispatchError) {
+          signale.warn(`[CONTACT] ${transitionEvent} workflow dispatch failed (state and marker persisted):`, dispatchError);
         }
       }
 
@@ -309,25 +323,39 @@ export class ContactService {
     const mergedData = ContactService.mergeContactData(existing?.data ?? null, data ?? {});
 
     if (existing) {
-      // Track subscription status change
-      const isSubscriptionChanging = subscribed !== undefined && existing.subscribed !== subscribed;
-      const wasSubscribed = existing.subscribed;
-
       try {
-        const updated = await prisma.contact.update({
-          where: {id: existing.id},
-          data: {
-            data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
-            ...(subscribed !== undefined ? {subscribed} : {}),
-          },
+        // Same atomicity rule as `update`/`subscribe`: the transition and its event (the
+        // bounce-history reset marker) commit together, and the transition is detected by
+        // a conditional update inside the transaction; workflows dispatch afterwards.
+        const {updated, transitionEvent} = await prisma.$transaction(async tx => {
+          let subscriptionEvent: 'contact.subscribed' | 'contact.unsubscribed' | null = null;
+          if (subscribed !== undefined) {
+            const flip = await tx.contact.updateMany({
+              where: {id: existing.id, subscribed: !subscribed},
+              data: {subscribed},
+            });
+            if (flip.count > 0) {
+              subscriptionEvent = subscribed ? 'contact.subscribed' : 'contact.unsubscribed';
+            }
+          }
+
+          const updatedContact = await tx.contact.update({
+            where: {id: existing.id},
+            data: {
+              data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
+            },
+          });
+          if (subscriptionEvent) {
+            await tx.event.create({data: {projectId, contactId: updatedContact.id, name: subscriptionEvent}});
+          }
+          return {updated: updatedContact, transitionEvent: subscriptionEvent};
         });
 
-        // Track subscription event if status changed
-        if (isSubscriptionChanging) {
-          if (subscribed && !wasSubscribed) {
-            await EventService.trackEvent(projectId, 'contact.subscribed', updated.id);
-          } else if (!subscribed && wasSubscribed) {
-            await EventService.trackEvent(projectId, 'contact.unsubscribed', updated.id);
+        if (transitionEvent) {
+          try {
+            await EventService.dispatchEvent(projectId, transitionEvent, updated.id);
+          } catch (dispatchError) {
+            signale.warn(`[CONTACT] ${transitionEvent} workflow dispatch failed (state and marker persisted):`, dispatchError);
           }
         }
 
@@ -446,13 +474,39 @@ export class ContactService {
    * PUBLIC: Subscribe a contact
    */
   public static async subscribe(contactId: string): Promise<Contact> {
-    const contact = await prisma.contact.update({
-      where: {id: contactId},
-      data: {subscribed: true},
+    // The state flip and the `contact.subscribed` event are written in one transaction:
+    // the event doubles as the bounce-history reset marker (see BounceService), so the
+    // marker must exist exactly when the transition happened — a transition without its
+    // marker could not be repaired by retrying (the conditional update would be a no-op).
+    // The conditional update also makes transition detection atomic against concurrent
+    // state changes, so a re-submitted subscribe on an already-subscribed contact is a
+    // no-op that resets nothing.
+    const {contact, transitioned} = await prisma.$transaction(async tx => {
+      const transition = await tx.contact.updateMany({
+        where: {id: contactId, subscribed: false},
+        data: {subscribed: true},
+      });
+
+      const updated = await tx.contact.findUniqueOrThrow({where: {id: contactId}});
+
+      if (transition.count > 0) {
+        await tx.event.create({
+          data: {projectId: updated.projectId, contactId, name: 'contact.subscribed'},
+        });
+      }
+
+      return {contact: updated, transitioned: transition.count > 0};
     });
 
-    // Track subscription event
-    await EventService.trackEvent(contact.projectId, 'contact.subscribed', contactId);
+    // Workflow side effects run outside the transaction and are best-effort: their
+    // failure must not lose the already-persisted marker or the state change.
+    if (transitioned) {
+      try {
+        await EventService.dispatchEvent(contact.projectId, 'contact.subscribed', contactId);
+      } catch (error) {
+        signale.warn('[CONTACT] contact.subscribed workflow dispatch failed (state and marker persisted):', error);
+      }
+    }
 
     return contact;
   }

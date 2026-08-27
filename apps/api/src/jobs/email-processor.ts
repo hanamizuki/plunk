@@ -15,6 +15,7 @@ import {
   EMAIL_WORKER_MAX_CONCURRENCY,
 } from '../app/constants.js';
 import {prisma} from '../database/prisma.js';
+import {BounceService} from '../services/BounceService.js';
 import {CampaignService} from '../services/CampaignService.js';
 import {EmailService} from '../services/EmailService.js';
 import {EventService} from '../services/EventService.js';
@@ -113,6 +114,33 @@ export async function createEmailWorker() {
 
         // Cancelled emails are terminal for the campaign — finalize so it doesn't
         // stay stuck in SENDING forever waiting on emails that will never be sent.
+        if (email.campaignId) {
+          await CampaignService.finalizeIfDone(email.campaignId);
+        }
+        return;
+      }
+
+      // Never hand a known-dead address to SES: a contact unsubscribed by a hard bounce
+      // would bounce again on every attempt (transactional templates skip the
+      // subscription check, and SES's account-level suppression list is optional).
+      // Manual unsubscribes without a bounce on record keep receiving transactional mail.
+      // The check runs on the job's contact snapshot: re-reading the contact here would put
+      // a query on every send to close a millisecond race whose whole cost is one extra
+      // (or one skipped) email — the next attempt sees the settled state either way.
+      const recipientOverride =
+        email.headers && typeof email.headers === 'object' && !Array.isArray(email.headers)
+          ? (email.headers as Record<string, string>)['X-Plunk-Recipient-Override']
+          : undefined;
+      if (!recipientOverride && (await BounceService.isHardBounced(email.contact))) {
+        signale.warn(`[EMAIL-PROCESSOR] Contact ${email.contactId} hard-bounced, cancelling email ${emailId}`);
+        await prisma.email.update({
+          where: {id: emailId},
+          data: {
+            status: EmailStatus.FAILED,
+            error: 'Recipient address hard-bounced',
+          },
+        });
+
         if (email.campaignId) {
           await CampaignService.finalizeIfDone(email.campaignId);
         }

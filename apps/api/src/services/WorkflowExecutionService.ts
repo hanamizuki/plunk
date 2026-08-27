@@ -1051,34 +1051,49 @@ export class WorkflowExecutionService {
 
     const desiredSubscribed =
       subscriptionAction === 'subscribe' ? true : subscriptionAction === 'unsubscribe' ? false : undefined;
-    const subscriptionChanging = desiredSubscribed !== undefined && desiredSubscribed !== contact.subscribed;
 
-    const updateData: Prisma.ContactUpdateInput = {};
-    if (hasDataUpdates) {
-      updateData.data = toPrismaJson(newData);
-    }
-    if (subscriptionChanging) {
-      updateData.subscribed = desiredSubscribed;
-    }
+    // The subscription events double as bounce-history reset markers (see BounceService),
+    // so — like every ContactService path — the transition is detected by a conditional
+    // update inside a transaction and committed together with its event; the workflow
+    // side effects dispatch afterwards, best-effort.
+    const transitionEvent = await prisma.$transaction(async tx => {
+      let subscriptionEvent: 'contact.subscribed' | 'contact.unsubscribed' | null = null;
+      if (desiredSubscribed !== undefined) {
+        const flip = await tx.contact.updateMany({
+          where: {id: contact.id, subscribed: !desiredSubscribed},
+          data: {subscribed: desiredSubscribed},
+        });
+        if (flip.count > 0) {
+          subscriptionEvent = desiredSubscribed ? 'contact.subscribed' : 'contact.unsubscribed';
+        }
+      }
 
-    if (Object.keys(updateData).length > 0) {
-      await prisma.contact.update({
-        where: {id: contact.id},
-        data: updateData,
-      });
-    }
+      if (hasDataUpdates) {
+        await tx.contact.update({
+          where: {id: contact.id},
+          data: {data: toPrismaJson(newData)},
+        });
+      }
 
-    if (subscriptionChanging) {
+      if (subscriptionEvent) {
+        await tx.event.create({
+          data: {projectId: execution.workflow.projectId, contactId: contact.id, name: subscriptionEvent},
+        });
+      }
+      return subscriptionEvent;
+    });
+
+    if (transitionEvent) {
       const {EventService} = await import('./EventService.js');
-      await EventService.trackEvent(
-        execution.workflow.projectId,
-        desiredSubscribed ? 'contact.subscribed' : 'contact.unsubscribed',
-        contact.id,
-      );
+      try {
+        await EventService.dispatchEvent(execution.workflow.projectId, transitionEvent, contact.id);
+      } catch (dispatchError) {
+        signale.warn(`[WORKFLOW] ${transitionEvent} dispatch failed (state and marker persisted):`, dispatchError);
+      }
     }
 
     return {
-      updated: hasDataUpdates || subscriptionChanging,
+      updated: hasDataUpdates || transitionEvent !== null,
       updates,
       newData,
       subscriptionAction,
