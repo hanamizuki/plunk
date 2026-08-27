@@ -394,11 +394,13 @@ export class Webhooks {
             updateData.bouncedAt = now;
             eventData = {
               ...baseEventData,
+              recipient: email.contact.email,
               bounceType,
               bounceSubType,
               bouncedAt: now.toISOString(),
               relayStrike: relayStrike.strike,
               relayStrikeThreshold: relayStrike.threshold,
+              unsubscribed: false,
             };
           } else if (isPermanentBounce) {
             // Hard bounce - counts toward bounce rate and unsubscribes contact
@@ -412,10 +414,12 @@ export class Webhooks {
             });
             eventData = {
               ...baseEventData,
+              recipient: email.contact.email,
               bounceType,
               bounceSubType,
               bouncedAt: now.toISOString(),
               ...(relayStrike ? {relayStrike: relayStrike.strike, relayStrikeThreshold: relayStrike.threshold} : {}),
+              unsubscribed: true,
             };
 
             // Send notification about permanent bounce
@@ -445,8 +449,10 @@ export class Webhooks {
             });
             eventData = {
               ...baseEventData,
+              recipient: email.contact.email,
               bounceType,
               bouncedAt: now.toISOString(),
+              unsubscribed: true,
             };
 
             await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);

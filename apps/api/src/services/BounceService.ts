@@ -58,7 +58,10 @@ export class BounceService {
     if (at < 0) {
       return false;
     }
-    const domain = email.slice(at + 1).trim().toLowerCase();
+    const domain = email
+      .slice(at + 1)
+      .trim()
+      .toLowerCase();
     return PRIVATE_RELAY_DOMAINS.includes(domain);
   }
 
@@ -72,7 +75,8 @@ export class BounceService {
     }
     return (bounce.bouncedRecipients ?? []).some(
       recipient =>
-        (recipient.status ?? '').startsWith('5.1.1') || /(^|[^\d.])5\.1\.1([^\d.]|$)/.test(recipient.diagnosticCode ?? ''),
+        (recipient.status ?? '').startsWith('5.1.1') ||
+        /(^|[^\d.])5\.1\.1([^\d.]|$)/.test(recipient.diagnosticCode ?? ''),
     );
   }
 
@@ -113,9 +117,12 @@ export class BounceService {
     const today = toUtcDay(now);
     const priorStrikeDays = new Set<string>();
     for (const event of priorBounces) {
-      const data = event.data as {relayStrike?: unknown} | null;
+      const data = event.data as {relayStrike?: unknown; recipient?: unknown} | null;
       if (typeof data?.relayStrike !== 'number') {
         continue; // bounce recorded before strike tracking (or not a relay bounce) — never counts
+      }
+      if (data.recipient !== contact.email) {
+        continue; // strikes belong to the address that bounced, not to the (mutable) contact
       }
       const day = toUtcDay(event.createdAt);
       if (day !== today) {
@@ -132,16 +139,22 @@ export class BounceService {
    * handed to SES again — every attempt is a guaranteed bounce that only hurts sender
    * reputation. Contacts that unsubscribed manually (no hard bounce on record) are not
    * affected, and neither are contacts that were re-subscribed after a bounce.
+   *
+   * Only bounces that actually unsubscribed the contact count (`data.unsubscribed` is
+   * `true`). A tolerated relay strike records `unsubscribed: false` and is ignored, so a
+   * contact that was already unsubscribed for another reason can still reach the strike
+   * threshold — or recover. Events written before that marker existed always unsubscribed
+   * on a permanent bounce, so a missing marker counts as `true`.
    */
   public static async isHardBounced(contact: {id: string; subscribed: boolean}): Promise<boolean> {
     if (contact.subscribed) {
       return false;
     }
-    const hardBounce = await prisma.event.findFirst({
+    const permanentBounces = await prisma.event.findMany({
       where: {contactId: contact.id, name: 'email.bounce', data: {path: ['bounceType'], equals: 'Permanent'}},
-      select: {id: true},
+      select: {data: true},
     });
-    return hardBounce !== null;
+    return permanentBounces.some(event => (event.data as {unsubscribed?: unknown} | null)?.unsubscribed !== false);
   }
 }
 
