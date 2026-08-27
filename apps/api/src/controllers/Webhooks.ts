@@ -523,7 +523,21 @@ export class Webhooks {
               // Track event (this will trigger workflows)
               await EventService.trackEvent(email.projectId, eventName, email.contactId, email.id, eventData);
             } catch (persistError) {
-              bouncePersistenceError = persistError;
+              // trackEvent inserts the event row before firing workflow side effects. Only a
+              // missing event (or a failed email update, which runs before it) warrants an SNS
+              // redelivery — after a post-insert workflow failure a retry would just duplicate
+              // the event. The existence check also makes a redelivery itself idempotent.
+              const eventPersisted = await prisma.event
+                .findFirst({where: {emailId: email.id, name: eventName}, select: {id: true}})
+                .catch(() => null);
+              if (eventPersisted) {
+                signale.warn(
+                  '[WEBHOOK] Bounce event persisted but post-insert processing failed (continuing):',
+                  persistError,
+                );
+              } else {
+                bouncePersistenceError = persistError;
+              }
             }
           };
 
