@@ -231,33 +231,32 @@ export class ContactService {
         throw new HttpException(400, 'data must be an object');
       }
     }
-    if (data.subscribed !== undefined) {
-      updateData.subscribed = data.subscribed;
-    }
-
-    // Track subscription status change
-    const isSubscriptionChanging = data.subscribed !== undefined && existing.subscribed !== data.subscribed;
-    const wasSubscribed = existing.subscribed;
-
     try {
       // The subscription events double as bounce-history reset markers (see BounceService),
       // so a transition must never commit without its event — state and event are written
-      // in one transaction, workflow side effects fire afterwards (best-effort).
-      const transitionEvent = isSubscriptionChanging
-        ? data.subscribed && !wasSubscribed
-          ? ('contact.subscribed' as const)
-          : ('contact.unsubscribed' as const)
-        : null;
+      // in one transaction, and the transition itself is detected by a conditional update
+      // INSIDE the transaction (a pre-read snapshot could race a concurrent flip).
+      // Workflow side effects fire afterwards (best-effort).
+      const {updated, transitionEvent} = await prisma.$transaction(async tx => {
+        let subscriptionEvent: 'contact.subscribed' | 'contact.unsubscribed' | null = null;
+        if (data.subscribed !== undefined) {
+          const flip = await tx.contact.updateMany({
+            where: {id: contactId, subscribed: !data.subscribed},
+            data: {subscribed: data.subscribed},
+          });
+          if (flip.count > 0) {
+            subscriptionEvent = data.subscribed ? 'contact.subscribed' : 'contact.unsubscribed';
+          }
+        }
 
-      const updated = await prisma.$transaction(async tx => {
         const updatedContact = await tx.contact.update({
           where: {id: contactId},
           data: updateData,
         });
-        if (transitionEvent) {
-          await tx.event.create({data: {projectId, contactId, name: transitionEvent}});
+        if (subscriptionEvent) {
+          await tx.event.create({data: {projectId, contactId, name: subscriptionEvent}});
         }
-        return updatedContact;
+        return {updated: updatedContact, transitionEvent: subscriptionEvent};
       });
 
       if (transitionEvent) {
@@ -324,31 +323,32 @@ export class ContactService {
     const mergedData = ContactService.mergeContactData(existing?.data ?? null, data ?? {});
 
     if (existing) {
-      // Track subscription status change
-      const isSubscriptionChanging = subscribed !== undefined && existing.subscribed !== subscribed;
-      const wasSubscribed = existing.subscribed;
-
       try {
         // Same atomicity rule as `update`/`subscribe`: the transition and its event (the
-        // bounce-history reset marker) commit together; workflows dispatch afterwards.
-        const transitionEvent = isSubscriptionChanging
-          ? subscribed && !wasSubscribed
-            ? ('contact.subscribed' as const)
-            : ('contact.unsubscribed' as const)
-          : null;
+        // bounce-history reset marker) commit together, and the transition is detected by
+        // a conditional update inside the transaction; workflows dispatch afterwards.
+        const {updated, transitionEvent} = await prisma.$transaction(async tx => {
+          let subscriptionEvent: 'contact.subscribed' | 'contact.unsubscribed' | null = null;
+          if (subscribed !== undefined) {
+            const flip = await tx.contact.updateMany({
+              where: {id: existing.id, subscribed: !subscribed},
+              data: {subscribed},
+            });
+            if (flip.count > 0) {
+              subscriptionEvent = subscribed ? 'contact.subscribed' : 'contact.unsubscribed';
+            }
+          }
 
-        const updated = await prisma.$transaction(async tx => {
           const updatedContact = await tx.contact.update({
             where: {id: existing.id},
             data: {
               data: Object.keys(mergedData).length > 0 ? toPrismaJson(mergedData) : Prisma.JsonNull,
-              ...(subscribed !== undefined ? {subscribed} : {}),
             },
           });
-          if (transitionEvent) {
-            await tx.event.create({data: {projectId, contactId: updatedContact.id, name: transitionEvent}});
+          if (subscriptionEvent) {
+            await tx.event.create({data: {projectId, contactId: updatedContact.id, name: subscriptionEvent}});
           }
-          return updatedContact;
+          return {updated: updatedContact, transitionEvent: subscriptionEvent};
         });
 
         if (transitionEvent) {
