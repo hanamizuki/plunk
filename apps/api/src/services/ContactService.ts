@@ -446,20 +446,22 @@ export class ContactService {
    * PUBLIC: Subscribe a contact
    */
   public static async subscribe(contactId: string): Promise<Contact> {
-    const existing = await prisma.contact.findUnique({
-      where: {id: contactId},
-      select: {subscribed: true},
+    // Atomic transition detection: the conditional update succeeds exactly when the
+    // contact flips from unsubscribed to subscribed, so a concurrent state change cannot
+    // make the decision below run on stale data.
+    const transition = await prisma.contact.updateMany({
+      where: {id: contactId, subscribed: false},
+      data: {subscribed: true},
     });
 
-    const contact = await prisma.contact.update({
+    const contact = await prisma.contact.findUniqueOrThrow({
       where: {id: contactId},
-      data: {subscribed: true},
     });
 
     // Track the subscription event only on an actual transition: `contact.subscribed`
     // doubles as the bounce-history reset marker (see BounceService), so a re-submitted
     // subscribe action on an already-subscribed contact must not reset strikes.
-    if (existing && !existing.subscribed) {
+    if (transition.count > 0) {
       await EventService.trackEvent(contact.projectId, 'contact.subscribed', contactId);
     }
 

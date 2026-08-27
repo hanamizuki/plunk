@@ -460,8 +460,14 @@ export class Webhooks {
                 unsubscribed: bounceIsForCurrentAddress && !staleBounce,
               };
 
-              // Send notification about permanent bounce
-              await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+              // Send notification about permanent bounce. Best-effort: ntfy uses Redis, and a
+              // notification failure must not abort the handler before the bounce is persisted
+              // (SNS would be acknowledged while the causal event was lost).
+              try {
+                await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+              } catch (notifyError) {
+                signale.warn('[WEBHOOK] Bounce notification failed (continuing):', notifyError);
+              }
             } else if (isTransientBounce) {
               // Soft bounce (e.g., out-of-office, mailbox full) - don't count toward bounce rate
               signale.info(
@@ -498,7 +504,11 @@ export class Webhooks {
                 unsubscribed: bounceIsForCurrentAddress && !staleBounce,
               };
 
-              await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+              try {
+                await NtfyService.notifyEmailBounce(email.project.name, email.projectId, email.contact.email, bounceType);
+              } catch (notifyError) {
+                signale.warn('[WEBHOOK] Bounce notification failed (continuing):', notifyError);
+              }
             }
 
             await prisma.email.update({where: {id: email.id}, data: updateData});
@@ -529,8 +539,12 @@ export class Webhooks {
             complainedAt: now.toISOString(),
           };
 
-          // Send notification about complaint
-          await NtfyService.notifyEmailComplaint(email.project.name, email.projectId, email.contact.email);
+          // Send notification about complaint (best-effort, same reasoning as the bounce branch)
+          try {
+            await NtfyService.notifyEmailComplaint(email.project.name, email.projectId, email.contact.email);
+          } catch (notifyError) {
+            signale.warn('[WEBHOOK] Complaint notification failed (continuing):', notifyError);
+          }
           break;
 
         default:
