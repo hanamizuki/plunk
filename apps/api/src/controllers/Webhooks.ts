@@ -425,10 +425,13 @@ export class Webhooks {
               signale.warn(`[WEBHOOK] Permanent bounce received for ${email.contact.email} from ${email.project.name}`);
               updateData.status = EmailStatus.BOUNCED;
               updateData.bouncedAt = now;
-              // Unsubscribe contact on permanent bounce (of the address it currently uses)
+              // Unsubscribe contact on permanent bounce (of the address it currently uses).
+              // The email predicate re-checks the address at write time: if the contact
+              // switched addresses after this webhook loaded it, the replacement address
+              // must not be unsubscribed for the old address's bounce.
               if (bounceIsForCurrentAddress) {
-                await prisma.contact.update({
-                  where: {id: email.contactId},
+                await prisma.contact.updateMany({
+                  where: {id: email.contactId, email: email.contact.email},
                   data: {subscribed: false},
                 });
               } else {
@@ -469,8 +472,9 @@ export class Webhooks {
               updateData.status = EmailStatus.BOUNCED;
               updateData.bouncedAt = now;
               if (bounceIsForCurrentAddress) {
-                await prisma.contact.update({
-                  where: {id: email.contactId},
+                // Same write-time address re-check as the permanent branch
+                await prisma.contact.updateMany({
+                  where: {id: email.contactId, email: email.contact.email},
                   data: {subscribed: false},
                 });
               }

@@ -136,6 +136,10 @@ export class BounceService {
     const windowStart = new Date(bouncedAt.getTime() - RELAY_STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
     // Re-subscribing a contact (dashboard, API, or a manual recovery after a false bounce)
     // resets the count: strikes recorded before the latest `contact.subscribed` event are ignored.
+    // Single-contact recovery paths write that event synchronously (`ContactService.subscribe`);
+    // `bulkSubscribe` records events after returning, so a bounce landing inside that brief
+    // window can still see pre-recovery strikes — accepted: the contact can simply be
+    // recovered again, and making bulk event writes synchronous would stall large batches.
     const resubscribed = await prisma.event.findFirst({
       where: {contactId: contact.id, name: 'contact.subscribed'},
       orderBy: {createdAt: 'desc'},
