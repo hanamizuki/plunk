@@ -172,6 +172,12 @@ export const PLUNK_ENABLED = PLUNK_API_KEY !== '' && PLUNK_FROM_ADDRESS !== '';
 // Useful for self-hosters who want to manage project status manually
 export const AUTO_PROJECT_DISABLE = validateEnv('AUTO_PROJECT_DISABLE', 'true') === 'true';
 
+// Apple private-relay bounce handling (see BounceService)
+// Apple's "Hide My Email" relay intermittently returns a hard "5.1.1 user not found" for
+// valid addresses, so a contact on a relay domain is only unsubscribed after this many
+// hard bounces on distinct days. Set to 1 to unsubscribe on the first bounce like other domains.
+export const RELAY_HARD_BOUNCE_STRIKES = Math.max(1, Number(validateEnv('RELAY_HARD_BOUNCE_STRIKES', '3')) || 3);
+
 // Self-hosting Configuration (optional)
 // Controls whether new user signups are allowed (default: false)
 export const DISABLE_SIGNUPS = process.env.DISABLE_SIGNUPS === 'true';

@@ -14,6 +14,7 @@ import {DASHBOARD_URI, LANDING_URI, STRIPE_ENABLED, STRIPE_WEBHOOK_SECRET} from 
 import {stripe} from '../app/stripe.js';
 import {prisma} from '../database/prisma.js';
 import {BillingLimitService} from '../services/BillingLimitService.js';
+import {BounceService} from '../services/BounceService.js';
 import {ContactService} from '../services/ContactService.js';
 import {EventService} from '../services/EventService.js';
 import {MembershipService} from '../services/MembershipService.js';
@@ -373,10 +374,33 @@ export class Webhooks {
 
         case 'Bounce': {
           const bounceType = body.bounce?.bounceType;
+          const bounceSubType = body.bounce?.bounceSubType;
           const isPermanentBounce = bounceType === 'Permanent';
           const isTransientBounce = bounceType === 'Transient';
 
-          if (isPermanentBounce) {
+          // Apple private-relay addresses intermittently hard-bounce with "5.1.1 user not
+          // found" although they are valid, so a single hard bounce must not unsubscribe
+          // the contact. Strikes are counted per distinct day (see BounceService).
+          const relayStrike = isPermanentBounce
+            ? await BounceService.evaluateRelayStrike(email.contact, body.bounce, now)
+            : null;
+
+          if (relayStrike && !relayStrike.unsubscribe) {
+            signale.warn(
+              `[WEBHOOK] Private-relay hard bounce for ${email.contact.email} from ${email.project.name} (strike ${relayStrike.strike}/${relayStrike.threshold}) - keeping contact subscribed`,
+            );
+            // The email did bounce; only the contact-level consequence is deferred
+            updateData.status = EmailStatus.BOUNCED;
+            updateData.bouncedAt = now;
+            eventData = {
+              ...baseEventData,
+              bounceType,
+              bounceSubType,
+              bouncedAt: now.toISOString(),
+              relayStrike: relayStrike.strike,
+              relayStrikeThreshold: relayStrike.threshold,
+            };
+          } else if (isPermanentBounce) {
             // Hard bounce - counts toward bounce rate and unsubscribes contact
             signale.warn(`[WEBHOOK] Permanent bounce received for ${email.contact.email} from ${email.project.name}`);
             updateData.status = EmailStatus.BOUNCED;
@@ -389,7 +413,9 @@ export class Webhooks {
             eventData = {
               ...baseEventData,
               bounceType,
+              bounceSubType,
               bouncedAt: now.toISOString(),
+              ...(relayStrike ? {relayStrike: relayStrike.strike, relayStrikeThreshold: relayStrike.threshold} : {}),
             };
 
             // Send notification about permanent bounce
