@@ -19,7 +19,7 @@ export class Events {
     const auth = res.locals.auth;
     const {name, contactId, emailId, data} = req.body;
 
-    if (!name) {
+    if (!name || typeof name !== 'string') {
       return res.status(400).json({error: 'Event name is required'});
     }
 
