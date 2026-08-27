@@ -378,18 +378,19 @@ export class Webhooks {
           const isPermanentBounce = bounceType === 'Permanent';
           const isTransientBounce = bounceType === 'Transient';
 
+          // The bounce is attributed to the address in the DSN and to the time the ISP
+          // reported it, not to the contact record / processing time: the contact's email
+          // may have changed in between, and SNS may deliver late or out of order.
+          const sesBouncedAt = body.bounce?.timestamp ? new Date(body.bounce.timestamp) : now;
+          const bouncedAt = Number.isNaN(sesBouncedAt.getTime()) ? now : sesBouncedAt;
+          const bouncedAddress = BounceService.bouncedAddress(body.bounce, email.contact.email);
+
           // Apple private-relay addresses intermittently hard-bounce with "5.1.1 user not
           // found" although they are valid, so a single hard bounce must not unsubscribe
           // the contact. Strikes are counted per distinct day of the SES bounce timestamp
           // and deduplicated by messageId, so an SNS redelivery never adds a strike.
-          const sesBouncedAt = body.bounce?.timestamp ? new Date(body.bounce.timestamp) : now;
           const relayStrike = isPermanentBounce
-            ? await BounceService.evaluateRelayStrike(
-                email.contact,
-                body.bounce,
-                Number.isNaN(sesBouncedAt.getTime()) ? now : sesBouncedAt,
-                email.messageId,
-              )
+            ? await BounceService.evaluateRelayStrike(email.contact, body.bounce, bouncedAt, email.messageId)
             : null;
 
           if (relayStrike && !relayStrike.unsubscribe) {
@@ -401,10 +402,10 @@ export class Webhooks {
             updateData.bouncedAt = now;
             eventData = {
               ...baseEventData,
-              recipient: email.contact.email,
+              recipient: bouncedAddress,
               bounceType,
               bounceSubType,
-              bouncedAt: now.toISOString(),
+              bouncedAt: bouncedAt.toISOString(),
               relayStrike: relayStrike.strike,
               relayStrikeThreshold: relayStrike.threshold,
               unsubscribed: false,
@@ -421,10 +422,10 @@ export class Webhooks {
             });
             eventData = {
               ...baseEventData,
-              recipient: email.contact.email,
+              recipient: bouncedAddress,
               bounceType,
               bounceSubType,
-              bouncedAt: now.toISOString(),
+              bouncedAt: bouncedAt.toISOString(),
               ...(relayStrike ? {relayStrike: relayStrike.strike, relayStrikeThreshold: relayStrike.threshold} : {}),
               unsubscribed: true,
             };
@@ -457,10 +458,10 @@ export class Webhooks {
             });
             eventData = {
               ...baseEventData,
-              recipient: email.contact.email,
+              recipient: bouncedAddress,
               bounceType,
               bounceSubType,
-              bouncedAt: now.toISOString(),
+              bouncedAt: bouncedAt.toISOString(),
               unsubscribed: true,
             };
 

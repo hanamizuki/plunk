@@ -8,8 +8,11 @@
  * final silently unsubscribes real users. For relay domains we count hard
  * "user not found" bounces on distinct days and only unsubscribe at a threshold.
  *
- * The strike history lives in `email.bounce` events (`data.relayStrike`), so bounces
- * recorded before strike tracking existed never count.
+ * The strike history lives in `email.bounce` events. The webhook stores on each bounce
+ * event the address that bounced (`recipient`), the SES bounce time (`bouncedAt`), the
+ * SES `messageId`, the strike number (`relayStrike`) and whether that bounce unsubscribed
+ * the contact (`unsubscribed`). Bounces recorded before those markers existed never
+ * count as strikes.
  */
 
 import {RELAY_HARD_BOUNCE_STRIKES} from '../app/constants.js';
@@ -25,9 +28,6 @@ export const PRIVATE_RELAY_DOMAINS: readonly string[] = ['privaterelay.appleid.c
 /** Only relay bounces inside this window count as strikes. */
 export const RELAY_STRIKE_WINDOW_DAYS = 90;
 
-/** Upper bound on bounce events read per strike evaluation (newest first). */
-export const RELAY_STRIKE_EVENT_LIMIT = 100;
-
 /** The subset of the SES `bounce` notification object we rely on. */
 export interface SesBouncedRecipient {
   emailAddress?: string;
@@ -42,9 +42,13 @@ export interface SesBounce {
   bounceType?: string;
   bounceSubType?: string;
   bouncedRecipients?: SesBouncedRecipient[];
+  /** ISO 8601 time at which the ISP sent the bounce. */
+  timestamp?: string;
 }
 
 export interface RelayStrikeVerdict {
+  /** The relay address this strike belongs to (from the DSN, not the contact record). */
+  recipient: string;
   /** 1-based strike number for this bounce (distinct UTC days inside the window). */
   strike: number;
   threshold: number;
@@ -69,6 +73,19 @@ export class BounceService {
   }
 
   /**
+   * The address SES actually attempted, taken from the DSN. Falls back to the contact's
+   * current address when the notification carries none. Using the DSN keeps a bounce
+   * attached to the address that produced it even if the contact's email was changed
+   * between sending and the bounce arriving.
+   */
+  public static bouncedAddress(bounce: SesBounce | undefined, fallback: string): string {
+    const fromDsn = bounce?.bouncedRecipients?.find(
+      recipient => typeof recipient.emailAddress === 'string' && recipient.emailAddress.includes('@'),
+    )?.emailAddress;
+    return (fromDsn ?? fallback).trim();
+  }
+
+  /**
    * A permanent bounce whose DSN status is 5.1.1 ("bad destination mailbox address").
    * The status field can be absent from the DSN, so the diagnostic code is checked as well.
    */
@@ -84,14 +101,15 @@ export class BounceService {
   }
 
   /**
-   * Decide how to treat a permanent bounce for a private-relay contact.
+   * Decide how to treat a permanent bounce for a private-relay address.
    *
    * Returns `null` when the bounce is not a relay "user not found" bounce (callers fall
    * back to the normal hard-bounce handling). Otherwise returns the strike number:
-   * one strike per distinct UTC day, bounded by RELAY_STRIKE_WINDOW_DAYS and reset by a
-   * later `contact.subscribed` event. Same-day repeats (e.g. several workflow emails
-   * during one bad hour at Apple) never escalate, and a redelivered notification for the
-   * same SES `messageId` never counts twice.
+   * one strike per distinct UTC day of the SES bounce time, bounded by
+   * RELAY_STRIKE_WINDOW_DAYS, scoped to the bounced address and reset by a later
+   * `contact.subscribed` event. Same-day repeats (e.g. several workflow emails during
+   * one bad hour at Apple) never escalate, and a redelivered notification for the same
+   * SES `messageId` never counts twice.
    *
    * @param bouncedAt When the bounce happened (the SES bounce timestamp); decides the strike day.
    * @param messageId SES message id of the bounced email, used to ignore SNS redeliveries.
@@ -102,12 +120,12 @@ export class BounceService {
     bouncedAt: Date = new Date(),
     messageId?: string | null,
   ): Promise<RelayStrikeVerdict | null> {
-    if (!this.isPrivateRelayAddress(contact.email) || !this.isUserNotFoundBounce(bounce)) {
+    const recipient = this.bouncedAddress(bounce, contact.email);
+    if (!this.isPrivateRelayAddress(recipient) || !this.isUserNotFoundBounce(bounce)) {
       return null;
     }
 
-    const now = bouncedAt;
-    const windowStart = new Date(now.getTime() - RELAY_STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const windowStart = new Date(bouncedAt.getTime() - RELAY_STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
     // Re-subscribing a contact (dashboard, API, or a manual recovery after a false bounce)
     // resets the count: strikes recorded before the latest `contact.subscribed` event are ignored.
     const resubscribed = await prisma.event.findFirst({
@@ -117,37 +135,30 @@ export class BounceService {
     });
     const countFrom = resubscribed && resubscribed.createdAt > windowStart ? resubscribed.createdAt : windowStart;
 
-    // Indexed by [contactId, name, createdAt]. A contact only ever has a handful of these,
-    // but the read is bounded anyway: the newest RELAY_STRIKE_EVENT_LIMIT bounces are more
-    // than enough to reach any sane threshold, so the webhook cost cannot grow with history.
-    const priorBounces = await prisma.event.findMany({
-      where: {contactId: contact.id, name: 'email.bounce', createdAt: {gte: countFrom}},
-      select: {createdAt: true, data: true},
-      orderBy: {createdAt: 'desc'},
-      take: RELAY_STRIKE_EVENT_LIMIT,
-    });
+    // Distinct strike days are aggregated in the database (index [contactId, name, createdAt]),
+    // grouped by the SES bounce time stored on the event (processing time for events that
+    // predate that field), scoped to the bounced address and ignoring a redelivery of the
+    // same SES message. The result is at most one row per day inside the window.
+    const strikeDays = await prisma.$queryRaw<{day: string}[]>`
+      SELECT DISTINCT to_char(
+        (CASE WHEN data->>'bouncedAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
+              THEN (data->>'bouncedAt')::timestamptz
+              ELSE "createdAt" AT TIME ZONE 'UTC' END) AT TIME ZONE 'UTC',
+        'YYYY-MM-DD'
+      ) AS day
+      FROM events
+      WHERE "contactId" = ${contact.id}
+        AND name = 'email.bounce'
+        AND "createdAt" >= ${countFrom}
+        AND jsonb_typeof(data->'relayStrike') = 'number'
+        AND lower(data->>'recipient') = ${recipient.toLowerCase()}
+        AND (${messageId ?? null}::text IS NULL OR data->>'messageId' IS DISTINCT FROM ${messageId ?? null}::text)
+    `;
 
-    const today = toUtcDay(now);
-    const priorStrikeDays = new Set<string>();
-    for (const event of priorBounces) {
-      const data = event.data as {relayStrike?: unknown; recipient?: unknown; messageId?: unknown} | null;
-      if (typeof data?.relayStrike !== 'number') {
-        continue; // bounce recorded before strike tracking (or not a relay bounce) — never counts
-      }
-      if (data.recipient !== contact.email) {
-        continue; // strikes belong to the address that bounced, not to the (mutable) contact
-      }
-      if (messageId && data.messageId === messageId) {
-        continue; // SNS redelivered the same bounce notification — not a new strike
-      }
-      const day = toUtcDay(event.createdAt);
-      if (day !== today) {
-        priorStrikeDays.add(day);
-      }
-    }
-
-    const strike = priorStrikeDays.size + 1;
-    return {strike, threshold: RELAY_HARD_BOUNCE_STRIKES, unsubscribe: strike >= RELAY_HARD_BOUNCE_STRIKES};
+    const today = toUtcDay(bouncedAt);
+    const priorStrikeDays = strikeDays.filter(row => row.day !== today).length;
+    const strike = priorStrikeDays + 1;
+    return {recipient, strike, threshold: RELAY_HARD_BOUNCE_STRIKES, unsubscribe: strike >= RELAY_HARD_BOUNCE_STRIKES};
   }
 
   /**
@@ -174,26 +185,19 @@ export class BounceService {
       orderBy: {createdAt: 'desc'},
       select: {createdAt: true},
     });
-    const bounces = await prisma.event.findMany({
-      where: {
-        contactId: contact.id,
-        name: 'email.bounce',
-        ...(resubscribed ? {createdAt: {gt: resubscribed.createdAt}} : {}),
-      },
-      select: {data: true},
-      orderBy: {createdAt: 'desc'},
-      take: RELAY_STRIKE_EVENT_LIMIT,
-    });
-    return bounces.some(event => {
-      const data = event.data as {unsubscribed?: unknown; bounceType?: unknown; recipient?: unknown} | null;
-      if (typeof data?.recipient === 'string' && data.recipient !== contact.email) {
-        return false; // the bounce belonged to an address this contact no longer uses
-      }
-      if (typeof data?.unsubscribed === 'boolean') {
-        return data.unsubscribed;
-      }
-      return data?.bounceType === 'Permanent';
-    });
+    const causalBounce = await prisma.$queryRaw<{found: number}[]>`
+      SELECT 1 AS found
+      FROM events
+      WHERE "contactId" = ${contact.id}
+        AND name = 'email.bounce'
+        AND "createdAt" > ${resubscribed?.createdAt ?? new Date(0)}
+        AND (data->>'recipient' IS NULL OR lower(data->>'recipient') = ${contact.email.toLowerCase()})
+        AND (CASE WHEN jsonb_typeof(data->'unsubscribed') = 'boolean'
+                  THEN (data->>'unsubscribed')::boolean
+                  ELSE data->>'bounceType' = 'Permanent' END)
+      LIMIT 1
+    `;
+    return causalBounce.length > 0;
   }
 }
 

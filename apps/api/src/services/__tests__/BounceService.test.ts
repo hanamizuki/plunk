@@ -112,10 +112,43 @@ describe('BounceService', () => {
       const verdict = await BounceService.evaluateRelayStrike(relay, userNotFound(relay.email));
 
       expect(verdict).toEqual({
+        recipient: relay.email,
         strike: 1,
         threshold: RELAY_HARD_BOUNCE_STRIKES,
         unsubscribe: RELAY_HARD_BOUNCE_STRIKES <= 1,
       });
+    });
+
+    it('attributes the strike to the address in the DSN, not to the contact record', async () => {
+      // The contact switched relay addresses after the bounced email was sent
+      const contact = await factories.createContact({projectId, email: 'new456@privaterelay.appleid.com'});
+      const oldAddress = 'old123@privaterelay.appleid.com';
+      const now = new Date('2026-08-27T14:00:00Z');
+      await bounceEvent(contact, new Date(now.getTime() - DAY_MS), {
+        recipient: oldAddress,
+        bounceType: 'Permanent',
+        relayStrike: 1,
+      });
+
+      const verdict = await BounceService.evaluateRelayStrike(contact, userNotFound(oldAddress), now);
+
+      expect(verdict?.recipient).toBe(oldAddress);
+      expect(verdict?.strike).toBe(2);
+    });
+
+    it('groups prior strikes by their SES bounce time, not by processing time', async () => {
+      const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
+      const now = new Date('2026-08-27T14:00:00Z');
+      // Delivered by SNS after midnight, but Apple bounced it the day before
+      await bounceEvent(relay, new Date('2026-08-27T00:10:00Z'), {
+        bounceType: 'Permanent',
+        relayStrike: 1,
+        bouncedAt: '2026-08-26T23:55:00Z',
+      });
+
+      const verdict = await BounceService.evaluateRelayStrike(relay, userNotFound(relay.email), now);
+
+      expect(verdict?.strike).toBe(2);
     });
 
     it('does not count an SNS redelivery of the same bounce on a later day', async () => {
@@ -162,6 +195,7 @@ describe('BounceService', () => {
       const verdict = await BounceService.evaluateRelayStrike(relay, userNotFound(relay.email), now);
 
       expect(verdict).toEqual({
+        recipient: relay.email,
         strike: RELAY_HARD_BOUNCE_STRIKES,
         threshold: RELAY_HARD_BOUNCE_STRIKES,
         unsubscribe: true,
@@ -181,6 +215,7 @@ describe('BounceService', () => {
       const verdict = await BounceService.evaluateRelayStrike(relay, userNotFound(relay.email), now);
 
       expect(verdict).toEqual({
+        recipient: relay.email,
         strike: 1,
         threshold: RELAY_HARD_BOUNCE_STRIKES,
         unsubscribe: RELAY_HARD_BOUNCE_STRIKES <= 1,
