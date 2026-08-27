@@ -1,6 +1,7 @@
 import {type Contact, Prisma} from '@plunk/db';
 import type {CursorPaginatedResponse, FilterCondition, FilterGroup} from '@plunk/types';
 import {toPrismaJson} from '@plunk/types';
+import signale from 'signale';
 
 import {prisma} from '../database/prisma.js';
 import {HttpException} from '../exceptions/index.js';
@@ -446,23 +447,38 @@ export class ContactService {
    * PUBLIC: Subscribe a contact
    */
   public static async subscribe(contactId: string): Promise<Contact> {
-    // Atomic transition detection: the conditional update succeeds exactly when the
-    // contact flips from unsubscribed to subscribed, so a concurrent state change cannot
-    // make the decision below run on stale data.
-    const transition = await prisma.contact.updateMany({
-      where: {id: contactId, subscribed: false},
-      data: {subscribed: true},
+    // The state flip and the `contact.subscribed` event are written in one transaction:
+    // the event doubles as the bounce-history reset marker (see BounceService), so the
+    // marker must exist exactly when the transition happened — a transition without its
+    // marker could not be repaired by retrying (the conditional update would be a no-op).
+    // The conditional update also makes transition detection atomic against concurrent
+    // state changes, so a re-submitted subscribe on an already-subscribed contact is a
+    // no-op that resets nothing.
+    const {contact, transitioned} = await prisma.$transaction(async tx => {
+      const transition = await tx.contact.updateMany({
+        where: {id: contactId, subscribed: false},
+        data: {subscribed: true},
+      });
+
+      const updated = await tx.contact.findUniqueOrThrow({where: {id: contactId}});
+
+      if (transition.count > 0) {
+        await tx.event.create({
+          data: {projectId: updated.projectId, contactId, name: 'contact.subscribed'},
+        });
+      }
+
+      return {contact: updated, transitioned: transition.count > 0};
     });
 
-    const contact = await prisma.contact.findUniqueOrThrow({
-      where: {id: contactId},
-    });
-
-    // Track the subscription event only on an actual transition: `contact.subscribed`
-    // doubles as the bounce-history reset marker (see BounceService), so a re-submitted
-    // subscribe action on an already-subscribed contact must not reset strikes.
-    if (transition.count > 0) {
-      await EventService.trackEvent(contact.projectId, 'contact.subscribed', contactId);
+    // Workflow side effects run outside the transaction and are best-effort: their
+    // failure must not lose the already-persisted marker or the state change.
+    if (transitioned) {
+      try {
+        await EventService.dispatchEvent(contact.projectId, 'contact.subscribed', contactId);
+      } catch (error) {
+        signale.warn('[CONTACT] contact.subscribed workflow dispatch failed (state and marker persisted):', error);
+      }
     }
 
     return contact;

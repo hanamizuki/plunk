@@ -1,5 +1,6 @@
-import {beforeEach, describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {ContactService} from '../ContactService';
+import {EventService} from '../EventService';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 
 describe('ContactService - Duplicate Prevention & Data Merging', () => {
@@ -522,6 +523,28 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
         where: {contactId: contact.id, name: 'contact.subscribed'},
       });
       expect(events).toHaveLength(1);
+    });
+
+    it('persists the reset marker with the transition even when workflow dispatch fails', async () => {
+      const contact = await factories.createContact({
+        projectId,
+        subscribed: false,
+      });
+      const dispatchSpy = vi.spyOn(EventService, 'dispatchEvent').mockRejectedValueOnce(new Error('workflow boom'));
+
+      try {
+        const result = await ContactService.subscribe(contact.id);
+        expect(result.subscribed).toBe(true);
+
+        // The marker is written atomically with the state flip, so a side-effect failure
+        // cannot leave a transition without its reset marker (BounceService relies on it)
+        const events = await prisma.event.findMany({
+          where: {contactId: contact.id, name: 'contact.subscribed'},
+        });
+        expect(events).toHaveLength(1);
+      } finally {
+        dispatchSpy.mockRestore();
+      }
     });
 
     it('should not record a subscription event when the contact is already subscribed', async () => {

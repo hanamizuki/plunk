@@ -37,13 +37,28 @@ export class EventService {
       },
     });
 
+    await this.dispatchEvent(projectId, eventName, contactId, data);
+
+    return event;
+  }
+
+  /**
+   * Fire the workflow side effects of an event that was already persisted.
+   * Split from trackEvent so callers that must create the event record atomically with
+   * other state (e.g. the subscription reset marker in ContactService.subscribe) can run
+   * the insert inside a transaction and dispatch afterwards.
+   */
+  public static async dispatchEvent(
+    projectId: string,
+    eventName: string,
+    contactId?: string,
+    data?: Record<string, unknown>,
+  ): Promise<void> {
     // Trigger workflows that are listening for this event
     await this.triggerWorkflows(projectId, eventName, contactId, data);
 
     // Resume workflows waiting for this event
     await WorkflowExecutionService.handleEvent(projectId, eventName, contactId, data);
-
-    return event;
   }
 
   /**
