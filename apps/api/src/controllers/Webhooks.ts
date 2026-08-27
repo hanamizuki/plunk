@@ -326,6 +326,8 @@ export class Webhooks {
       let eventData: Record<string, unknown> = baseEventData;
       // Set by handlers that persist the email update and the event themselves
       let persisted = false;
+      // Set when a bounce handler flipped contact state but could not persist the email/event
+      let bouncePersistenceError: unknown = null;
 
       // Process event based on type
       switch (eventType) {
@@ -406,7 +408,9 @@ export class Webhooks {
             // A bounce Apple reported before the contact was last re-subscribed must not flip
             // the contact, however late SNS delivers it — the same reset rule the strike
             // counter and the worker gate use, so the recorded `unsubscribed` marker and the
-            // actual subscription state always agree.
+            // actual subscription state always agree. (The reset time is the event's creation
+            // time; a bounce landing in the sub-second gap between a recovery's state flip and
+            // its event insert may be misread as stale — accepted: the next bounce settles it.)
             const resubscribedAt = isTransientBounce ? null : await BounceService.lastResubscribedAt(email.contactId);
             const staleBounce = resubscribedAt !== null && bouncedAt <= resubscribedAt;
 
@@ -511,15 +515,29 @@ export class Webhooks {
               }
             }
 
-            await prisma.email.update({where: {id: email.id}, data: updateData});
-            // Track event (this will trigger workflows)
-            await EventService.trackEvent(email.projectId, eventName, email.contactId, email.id, eventData);
+            // Persist the consequence. If this fails after the contact was already flipped,
+            // the causal `email.bounce` event would be missing and the worker gate blind, so
+            // the webhook must NOT acknowledge SNS in that case — see below.
+            try {
+              await prisma.email.update({where: {id: email.id}, data: updateData});
+              // Track event (this will trigger workflows)
+              await EventService.trackEvent(email.projectId, eventName, email.contactId, email.id, eventData);
+            } catch (persistError) {
+              bouncePersistenceError = persistError;
+            }
           };
 
           if (isPermanentBounce && BounceService.isPrivateRelayAddress(bouncedAddress)) {
             await BounceService.withRelayStrikeLock(bouncedAddress, handleBounce);
           } else {
             await handleBounce();
+          }
+          if (bouncePersistenceError) {
+            // Unlike other processing errors, a failed bounce persistence must surface as a
+            // non-2xx response: the contact update may already be applied, and only an SNS
+            // redelivery (the handler is idempotent) can restore the missing email/event state.
+            signale.error('[WEBHOOK] Bounce processed but persistence failed - asking SNS to redeliver:', bouncePersistenceError);
+            return res.status(500).json({success: false, error: 'Bounce persistence failed'});
           }
           persisted = true;
           break;
