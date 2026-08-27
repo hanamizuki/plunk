@@ -1,6 +1,8 @@
 import {beforeEach, describe, expect, it} from 'vitest';
+
 import {RELAY_HARD_BOUNCE_STRIKES} from '../../app/constants';
-import {BounceService, RELAY_STRIKE_WINDOW_DAYS, type SesBounce} from '../BounceService';
+import {BounceService, RELAY_STRIKE_WINDOW_DAYS} from '../BounceService';
+import type {SesBounce} from '../BounceService';
 import {factories, getPrismaClient} from '../../../../../test/helpers';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -74,6 +76,14 @@ describe('BounceService', () => {
       expect(BounceService.isUserNotFoundBounce(bounce)).toBe(true);
     });
 
+    it('matches the DSN status exactly (5.1.10 is a different code)', () => {
+      const nullMx: SesBounce = {
+        bounceType: 'Permanent',
+        bouncedRecipients: [{status: '5.1.10', diagnosticCode: 'smtp; 550 5.1.10 RESOLVER.ADR.RecipientNotFound'}],
+      };
+      expect(BounceService.isUserNotFoundBounce(nullMx)).toBe(false);
+    });
+
     it('rejects other permanent codes, transient bounces and missing data', () => {
       const policy: SesBounce = {
         bounceType: 'Permanent',
@@ -106,6 +116,29 @@ describe('BounceService', () => {
         threshold: RELAY_HARD_BOUNCE_STRIKES,
         unsubscribe: RELAY_HARD_BOUNCE_STRIKES <= 1,
       });
+    });
+
+    it('does not count an SNS redelivery of the same bounce on a later day', async () => {
+      const relay = await factories.createContact({projectId, email: 'abc123@privaterelay.appleid.com'});
+      const firstDelivery = new Date('2026-08-26T23:59:00Z');
+      const redelivery = new Date('2026-08-27T00:05:00Z');
+      await bounceEvent(relay, firstDelivery, {bounceType: 'Permanent', relayStrike: 1, messageId: 'ses-msg-1'});
+
+      const sameMessage = await BounceService.evaluateRelayStrike(
+        relay,
+        userNotFound(relay.email),
+        redelivery,
+        'ses-msg-1',
+      );
+      const newMessage = await BounceService.evaluateRelayStrike(
+        relay,
+        userNotFound(relay.email),
+        redelivery,
+        'ses-msg-2',
+      );
+
+      expect(sameMessage?.strike).toBe(1);
+      expect(newMessage?.strike).toBe(2);
     });
 
     it('does not escalate on same-day repeats', async () => {
@@ -212,6 +245,32 @@ describe('BounceService', () => {
       });
 
       expect(await BounceService.isHardBounced(contact)).toBe(true);
+    });
+
+    it('gates on unknown bounce types that the webhook treated as permanent', async () => {
+      const contact = await factories.createContact({projectId, email: 'odd@gmail.com', subscribed: false});
+      await bounceEvent(contact, new Date(), {bounceType: 'Undetermined', unsubscribed: true});
+
+      expect(await BounceService.isHardBounced(contact)).toBe(true);
+    });
+
+    it('ignores bounces that precede a later re-subscription', async () => {
+      const contact = await factories.createContact({projectId, email: 'back@gmail.com', subscribed: false});
+      const now = Date.now();
+      await bounceEvent(contact, new Date(now - 2 * DAY_MS), {bounceType: 'Permanent', unsubscribed: true});
+      await prisma.event.create({
+        data: {projectId, contactId: contact.id, name: 'contact.subscribed', createdAt: new Date(now - DAY_MS)},
+      });
+
+      // Unsubscribed again later (manually): the old bounce is no longer the reason
+      expect(await BounceService.isHardBounced(contact)).toBe(false);
+    });
+
+    it('ignores bounces recorded for a previous address of the contact', async () => {
+      const contact = await factories.createContact({projectId, email: 'new@gmail.com', subscribed: false});
+      await bounceEvent(contact, new Date(), {recipient: 'old@gmail.com', bounceType: 'Permanent', unsubscribed: true});
+
+      expect(await BounceService.isHardBounced(contact)).toBe(false);
     });
 
     it('is false while the contact is subscribed, even with bounce history', async () => {

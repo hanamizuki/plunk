@@ -176,7 +176,9 @@ export const AUTO_PROJECT_DISABLE = validateEnv('AUTO_PROJECT_DISABLE', 'true') 
 // Apple's "Hide My Email" relay intermittently returns a hard "5.1.1 user not found" for
 // valid addresses, so a contact on a relay domain is only unsubscribed after this many
 // hard bounces on distinct days. Set to 1 to unsubscribe on the first bounce like other domains.
-export const RELAY_HARD_BOUNCE_STRIKES = Math.max(1, Number(validateEnv('RELAY_HARD_BOUNCE_STRIKES', '3')) || 3);
+const relayHardBounceStrikesEnv = Number(validateEnv('RELAY_HARD_BOUNCE_STRIKES', '3'));
+export const RELAY_HARD_BOUNCE_STRIKES =
+  Number.isInteger(relayHardBounceStrikesEnv) && relayHardBounceStrikesEnv >= 1 ? relayHardBounceStrikesEnv : 3;
 
 // Self-hosting Configuration (optional)
 // Controls whether new user signups are allowed (default: false)

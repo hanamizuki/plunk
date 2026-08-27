@@ -380,14 +380,21 @@ export class Webhooks {
 
           // Apple private-relay addresses intermittently hard-bounce with "5.1.1 user not
           // found" although they are valid, so a single hard bounce must not unsubscribe
-          // the contact. Strikes are counted per distinct day (see BounceService).
+          // the contact. Strikes are counted per distinct day of the SES bounce timestamp
+          // and deduplicated by messageId, so an SNS redelivery never adds a strike.
+          const sesBouncedAt = body.bounce?.timestamp ? new Date(body.bounce.timestamp) : now;
           const relayStrike = isPermanentBounce
-            ? await BounceService.evaluateRelayStrike(email.contact, body.bounce, now)
+            ? await BounceService.evaluateRelayStrike(
+                email.contact,
+                body.bounce,
+                Number.isNaN(sesBouncedAt.getTime()) ? now : sesBouncedAt,
+                email.messageId,
+              )
             : null;
 
           if (relayStrike && !relayStrike.unsubscribe) {
             signale.warn(
-              `[WEBHOOK] Private-relay hard bounce for ${email.contact.email} from ${email.project.name} (strike ${relayStrike.strike}/${relayStrike.threshold}) - keeping contact subscribed`,
+              `[WEBHOOK] Private-relay hard bounce for contact ${email.contactId} from ${email.project.name} (strike ${relayStrike.strike}/${relayStrike.threshold}) - keeping contact subscribed`,
             );
             // The email did bounce; only the contact-level consequence is deferred
             updateData.status = EmailStatus.BOUNCED;
@@ -434,6 +441,7 @@ export class Webhooks {
             eventData = {
               ...baseEventData,
               bounceType,
+              bounceSubType,
               transientBounce: true,
             };
           } else {
@@ -451,6 +459,7 @@ export class Webhooks {
               ...baseEventData,
               recipient: email.contact.email,
               bounceType,
+              bounceSubType,
               bouncedAt: now.toISOString(),
               unsubscribed: true,
             };

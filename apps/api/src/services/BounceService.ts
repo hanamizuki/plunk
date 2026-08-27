@@ -25,6 +25,9 @@ export const PRIVATE_RELAY_DOMAINS: readonly string[] = ['privaterelay.appleid.c
 /** Only relay bounces inside this window count as strikes. */
 export const RELAY_STRIKE_WINDOW_DAYS = 90;
 
+/** Upper bound on bounce events read per strike evaluation (newest first). */
+export const RELAY_STRIKE_EVENT_LIMIT = 100;
+
 /** The subset of the SES `bounce` notification object we rely on. */
 export interface SesBouncedRecipient {
   emailAddress?: string;
@@ -75,7 +78,7 @@ export class BounceService {
     }
     return (bounce.bouncedRecipients ?? []).some(
       recipient =>
-        (recipient.status ?? '').startsWith('5.1.1') ||
+        (recipient.status ?? '').trim() === '5.1.1' ||
         /(^|[^\d.])5\.1\.1([^\d.]|$)/.test(recipient.diagnosticCode ?? ''),
     );
   }
@@ -87,17 +90,23 @@ export class BounceService {
    * back to the normal hard-bounce handling). Otherwise returns the strike number:
    * one strike per distinct UTC day, bounded by RELAY_STRIKE_WINDOW_DAYS and reset by a
    * later `contact.subscribed` event. Same-day repeats (e.g. several workflow emails
-   * during one bad hour at Apple) never escalate.
+   * during one bad hour at Apple) never escalate, and a redelivered notification for the
+   * same SES `messageId` never counts twice.
+   *
+   * @param bouncedAt When the bounce happened (the SES bounce timestamp); decides the strike day.
+   * @param messageId SES message id of the bounced email, used to ignore SNS redeliveries.
    */
   public static async evaluateRelayStrike(
     contact: {id: string; email: string},
     bounce: SesBounce | undefined,
-    now: Date = new Date(),
+    bouncedAt: Date = new Date(),
+    messageId?: string | null,
   ): Promise<RelayStrikeVerdict | null> {
     if (!this.isPrivateRelayAddress(contact.email) || !this.isUserNotFoundBounce(bounce)) {
       return null;
     }
 
+    const now = bouncedAt;
     const windowStart = new Date(now.getTime() - RELAY_STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
     // Re-subscribing a contact (dashboard, API, or a manual recovery after a false bounce)
     // resets the count: strikes recorded before the latest `contact.subscribed` event are ignored.
@@ -108,21 +117,28 @@ export class BounceService {
     });
     const countFrom = resubscribed && resubscribed.createdAt > windowStart ? resubscribed.createdAt : windowStart;
 
-    // Indexed by [contactId, name, createdAt]; a contact only ever has a handful of these.
+    // Indexed by [contactId, name, createdAt]. A contact only ever has a handful of these,
+    // but the read is bounded anyway: the newest RELAY_STRIKE_EVENT_LIMIT bounces are more
+    // than enough to reach any sane threshold, so the webhook cost cannot grow with history.
     const priorBounces = await prisma.event.findMany({
       where: {contactId: contact.id, name: 'email.bounce', createdAt: {gte: countFrom}},
       select: {createdAt: true, data: true},
+      orderBy: {createdAt: 'desc'},
+      take: RELAY_STRIKE_EVENT_LIMIT,
     });
 
     const today = toUtcDay(now);
     const priorStrikeDays = new Set<string>();
     for (const event of priorBounces) {
-      const data = event.data as {relayStrike?: unknown; recipient?: unknown} | null;
+      const data = event.data as {relayStrike?: unknown; recipient?: unknown; messageId?: unknown} | null;
       if (typeof data?.relayStrike !== 'number') {
         continue; // bounce recorded before strike tracking (or not a relay bounce) — never counts
       }
       if (data.recipient !== contact.email) {
         continue; // strikes belong to the address that bounced, not to the (mutable) contact
+      }
+      if (messageId && data.messageId === messageId) {
+        continue; // SNS redelivered the same bounce notification — not a new strike
       }
       const day = toUtcDay(event.createdAt);
       if (day !== today) {
@@ -141,20 +157,43 @@ export class BounceService {
    * affected, and neither are contacts that were re-subscribed after a bounce.
    *
    * Only bounces that actually unsubscribed the contact count (`data.unsubscribed` is
-   * `true`). A tolerated relay strike records `unsubscribed: false` and is ignored, so a
-   * contact that was already unsubscribed for another reason can still reach the strike
-   * threshold — or recover. Events written before that marker existed always unsubscribed
-   * on a permanent bounce, so a missing marker counts as `true`.
+   * `true`, which the webhook also sets for unknown bounce types it treats as permanent).
+   * A tolerated relay strike records `unsubscribed: false` and is ignored, so a contact
+   * that was already unsubscribed for another reason can still reach the strike threshold
+   * — or recover. Bounces recorded for a previous address of the contact, or before the
+   * contact was last re-subscribed, are ignored too. Events written before those markers
+   * existed always unsubscribed on a permanent bounce, so a missing marker falls back to
+   * `bounceType === 'Permanent'`.
    */
-  public static async isHardBounced(contact: {id: string; subscribed: boolean}): Promise<boolean> {
+  public static async isHardBounced(contact: {id: string; email: string; subscribed: boolean}): Promise<boolean> {
     if (contact.subscribed) {
       return false;
     }
-    const permanentBounces = await prisma.event.findMany({
-      where: {contactId: contact.id, name: 'email.bounce', data: {path: ['bounceType'], equals: 'Permanent'}},
-      select: {data: true},
+    const resubscribed = await prisma.event.findFirst({
+      where: {contactId: contact.id, name: 'contact.subscribed'},
+      orderBy: {createdAt: 'desc'},
+      select: {createdAt: true},
     });
-    return permanentBounces.some(event => (event.data as {unsubscribed?: unknown} | null)?.unsubscribed !== false);
+    const bounces = await prisma.event.findMany({
+      where: {
+        contactId: contact.id,
+        name: 'email.bounce',
+        ...(resubscribed ? {createdAt: {gt: resubscribed.createdAt}} : {}),
+      },
+      select: {data: true},
+      orderBy: {createdAt: 'desc'},
+      take: RELAY_STRIKE_EVENT_LIMIT,
+    });
+    return bounces.some(event => {
+      const data = event.data as {unsubscribed?: unknown; bounceType?: unknown; recipient?: unknown} | null;
+      if (typeof data?.recipient === 'string' && data.recipient !== contact.email) {
+        return false; // the bounce belonged to an address this contact no longer uses
+      }
+      if (typeof data?.unsubscribed === 'boolean') {
+        return data.unsubscribed;
+      }
+      return data?.bounceType === 'Permanent';
+    });
   }
 }
 

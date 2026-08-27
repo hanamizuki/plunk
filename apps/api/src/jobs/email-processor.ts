@@ -129,7 +129,7 @@ export async function createEmailWorker() {
           ? (email.headers as Record<string, string>)['X-Plunk-Recipient-Override']
           : undefined;
       if (!recipientOverride && (await BounceService.isHardBounced(email.contact))) {
-        signale.warn(`[EMAIL-PROCESSOR] Contact ${email.contact.email} hard-bounced, cancelling email ${emailId}`);
+        signale.warn(`[EMAIL-PROCESSOR] Contact ${email.contactId} hard-bounced, cancelling email ${emailId}`);
         await prisma.email.update({
           where: {id: emailId},
           data: {
