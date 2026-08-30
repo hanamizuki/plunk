@@ -26,6 +26,17 @@ upstream plunk_acme_challenge {
     server 127.0.0.1:8888;
 }
 
+# Minio is deliberately NOT declared as an upstream block here.
+#
+# Every other upstream is 127.0.0.1 inside this container, so it always resolves.
+# Minio is a separate compose service, resolved through Docker's embedded DNS —
+# and nginx resolves upstream hostnames once, at startup. If minio were declared
+# up here and happened to be down (or slow to get a DNS record) during a cold
+# start, nginx would fail to load the config and take the API, dashboard, landing
+# page and SMTP relay down with it. The dashboard block below therefore proxies
+# through a variable, which defers resolution to request time: a missing minio
+# then degrades to 502 on /uploads/ only, instead of an outage.
+
 # API Server (also serves as default_server for unmatched domains)
 server {
     listen ${NGINX_PORT} default_server;
@@ -70,6 +81,36 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Object storage passthrough for uploaded images.
+    #
+    # Without this block, POST /uploads/image succeeds (200) and hands back a URL
+    # built from S3_PUBLIC_URL — but that URL 404s, because nothing ever routed the
+    # path to minio. The upload looks like it worked right up until a recipient
+    # opens the email and sees a broken image.
+    #
+    # The path maps 1:1 with no rewrite: minio serves path-style URLs as
+    # /<bucket>/<key>, S3_BUCKET defaults to "uploads", and S3Service builds
+    # "${S3_PUBLIC_URL}/${key}". So /uploads/<key> is already exactly what minio
+    # expects, provided S3_PUBLIC_URL ends in "/uploads" on this domain.
+    #
+    # proxy_pass goes through $minio_backend on purpose — see the note by the
+    # upstream blocks. Host is pinned to $proxy_host rather than $host so minio
+    # keeps using path-style addressing instead of trying to read the public
+    # hostname as a virtual-hosted bucket name.
+    location /uploads/ {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $minio_backend http://minio:9000;
+        proxy_pass $minio_backend;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Objects are immutable (the key carries a timestamp + random suffix), so
+        # let mail clients and their image proxies cache them hard.
+        proxy_hide_header Set-Cookie;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
     }
 
     location / {
