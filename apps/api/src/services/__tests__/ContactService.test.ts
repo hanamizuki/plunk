@@ -74,6 +74,28 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
       });
       expect(contacts).toHaveLength(1);
     });
+
+    it('should let concurrent upserts of a brand-new email all succeed with one contact', async () => {
+      // mojo's Supabase triggers fire POST /contacts and POST /v1/track for a new user in the
+      // same millisecond; the upsert that lost the create race used to surface as a 500 and
+      // the track event (or the contact data) was dropped because pg_net never retries.
+      const email = 'upsert-race@example.com';
+
+      // Warm the service's connection pool: on a cold pool the first query's
+      // connection is the only one ready, so the other callers' findFirst would
+      // wait behind the first create and never see the race production sees.
+      await Promise.all(Array.from({length: 10}, () => ContactService.findByEmail(projectId, email)));
+
+      const results = await Promise.allSettled(
+        Array.from({length: 10}, () => ContactService.upsert(projectId, email, {locale: 'zh-TW'})),
+      );
+
+      expect(results.filter(r => r.status === 'rejected')).toHaveLength(0);
+
+      const contacts = await prisma.contact.findMany({where: {projectId, email}});
+      expect(contacts).toHaveLength(1);
+      expect(contacts[0].data).toMatchObject({locale: 'zh-TW'});
+    });
   });
 
   describe('Email Normalization (case-insensitive find-or-create)', () => {

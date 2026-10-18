@@ -309,6 +309,7 @@ export class ContactService {
     data?: Record<string, unknown>,
     subscribed?: boolean,
     defaultSubscribed: boolean = true,
+    retried = false,
   ): Promise<Contact> {
     const normalizedEmail = ContactService.normalizeEmail(email);
 
@@ -378,6 +379,12 @@ export class ContactService {
           },
         });
       } catch (error) {
+        // Lost the create race to a concurrent upsert of the same address (mojo's Supabase
+        // triggers hit /contacts and /v1/track for a new user in the same millisecond):
+        // the row exists now, so take the update path once instead of failing the request.
+        if (!retried && error instanceof Error && 'code' in error && error.code === 'P2002') {
+          return ContactService.upsert(projectId, email, data, subscribed, defaultSubscribed, true);
+        }
         // Provide helpful error message for database/validation issues
         throw new HttpException(
           500,
