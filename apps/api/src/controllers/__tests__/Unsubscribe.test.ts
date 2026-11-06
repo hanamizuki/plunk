@@ -109,6 +109,16 @@ describe('Unsubscribe controller', () => {
       expect(events).toHaveLength(1);
     });
 
+    it('records a single event when two provider POSTs for one contact overlap', async () => {
+      const contact = await factories.createContact({projectId, subscribed: true});
+
+      const results = await Promise.all([postOneClick(contact.id), postOneClick(contact.id)]);
+
+      expect(results.map(r => r.status)).toEqual([200, 200]);
+      const events = await prisma.event.findMany({where: {name: 'contact.unsubscribed', projectId}});
+      expect(events).toHaveLength(1);
+    });
+
     it('reports success for an unknown contact id rather than 404 or 500', async () => {
       const captured = await postOneClick('11111111-1111-4111-8111-111111111111');
 

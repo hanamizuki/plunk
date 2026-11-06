@@ -599,6 +599,18 @@ describe('ContactService - Duplicate Prevention & Data Merging', () => {
 
       expect(unsubscribed?.subscribed).toBe(false);
     });
+
+    it('should record one contact.unsubscribed event even when unsubscribe is called twice', async () => {
+      const contact = await factories.createContact({projectId, subscribed: true});
+
+      await ContactService.unsubscribe(contact.id);
+      await ContactService.unsubscribe(contact.id);
+
+      const events = await prisma.event.findMany({
+        where: {contactId: contact.id, name: 'contact.unsubscribed'},
+      });
+      expect(events).toHaveLength(1);
+    });
   });
 
   describe('Bulk Contact Operations', () => {

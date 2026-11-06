@@ -44,13 +44,13 @@ export class Unsubscribe {
 
     const contact = await prisma.contact.findUnique({
       where: {id: contactId},
-      select: {subscribed: true},
+      select: {id: true},
     });
 
-    // Only act on a contact that is still subscribed: providers retry and people
-    // click more than once, and a repeat must not fire a second
-    // `contact.unsubscribed` event.
-    if (contact?.subscribed) {
+    // ContactService.unsubscribe is atomic and idempotent: provider retries and
+    // repeat clicks, even overlapping ones, record a single `contact.unsubscribed`
+    // event. The lookup only keeps unknown ids out of it.
+    if (contact) {
       await ContactService.unsubscribe(contactId);
     }
 
