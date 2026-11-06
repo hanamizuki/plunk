@@ -2,6 +2,7 @@ import {SES} from '@aws-sdk/client-ses';
 import signale from 'signale';
 
 import {
+  API_URI,
   AWS_SES_ACCESS_KEY_ID,
   AWS_SES_REGION,
   AWS_SES_SECRET_ACCESS_KEY,
@@ -92,15 +93,24 @@ export async function sendRawEmail({
   attachments,
   tracking = true,
 }: SendRawEmailParams): Promise<{messageId: string}> {
-  // Extract the full unsubscribe URL from the HTML href attribute.
-  // The URL may have been rewritten by compile() to use a custom base,
-  // so we extract it as-is instead of rebuilding from DASHBOARD_URI.
-  const unsubscribeMatch = /href="(https?:\/\/[^"]*\/unsubscribe\/[a-f\d-]+)"/.exec(content.html);
-
-  let unsubscribeHeader = '';
-  if (unsubscribeMatch?.[1]) {
-    unsubscribeHeader = `List-Unsubscribe: <${unsubscribeMatch[1]}>`;
-  }
+  // RFC 8058 one-click unsubscribe. Mail that carries Plunk's unsubscribe link
+  // `<base>/unsubscribe/<contactId>` (marketing footer, or a template that
+  // placed {{unsubscribeUrl}} itself) advertises the one-click pair; mail
+  // without the link gets no List-Unsubscribe header at all. Only the contact
+  // id is taken from the link, because compile() may have rewritten its base.
+  // The header must point at the API's one-click endpoint (POST /unsubscribe/:id
+  // opts out with no interaction), not at the dashboard page the link opens:
+  // a provider POSTing to a page that only unsubscribes on a button click
+  // changes nothing. Gmail and Yahoo render their unsubscribe button only when
+  // both headers are present, and that button is what keeps recipients off the
+  // "report spam" button.
+  const unsubscribeMatch = /href="https?:\/\/[^"]*\/unsubscribe\/([a-f\d-]+)"/.exec(content.html);
+  const unsubscribeHeaders = unsubscribeMatch?.[1]
+    ? [
+        `List-Unsubscribe: <${API_URI.replace(/\/$/, '')}/unsubscribe/${unsubscribeMatch[1]}>`,
+        'List-Unsubscribe-Post: List-Unsubscribe=One-Click',
+      ]
+    : [];
 
   // Generate unique boundaries for multipart messages
   const altBoundary = `----=_AltPart_${Math.random().toString(36).substring(2)}`;
@@ -133,13 +143,13 @@ export async function sendRawEmail({
     rootContentType = `multipart/related; boundary="${relatedBoundary}"`;
   }
 
-  // Build the additional headers (custom headers + List-Unsubscribe), filtering
+  // Build the additional headers (custom headers + the List-Unsubscribe pair), filtering
   // out empties so we never emit a blank line inside the header section.
   // Per RFC 5322 §2.1, a blank line terminates the header section, so any blank
   // line here would push subsequent headers (notably List-Unsubscribe) into the body.
   const extraHeaderLines = [
     ...(headers ? Object.entries(headers).map(([key, value]) => `${key}: ${value}`) : []),
-    ...(unsubscribeHeader ? [unsubscribeHeader] : []),
+    ...unsubscribeHeaders,
   ];
   const extraHeaders = extraHeaderLines.length > 0 ? `\n${extraHeaderLines.join('\n')}` : '';
 
