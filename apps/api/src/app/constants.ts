@@ -64,6 +64,19 @@ export function getUnsubscribeBaseUrl(projectId: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
+// Every base Plunk itself writes unsubscribe links under: the dashboard, the global
+// override, and each project's custom base. Lets SESService tell Plunk's own opt-out
+// link apart from one a headless sender embedded for a list Plunk does not manage.
+const PLUNK_UNSUBSCRIBE_BASES = new Set(
+  [DASHBOARD_URI, UNSUBSCRIBE_URI, ...Object.values(CUSTOM_UNSUBSCRIBE_URLS)]
+    .filter(Boolean)
+    .map(url => url.replace(/\/$/, '')),
+);
+
+export function isPlunkUnsubscribeBase(base: string): boolean {
+  return PLUNK_UNSUBSCRIBE_BASES.has(base.replace(/\/$/, ''));
+}
+
 export const LANDING_URI = validateEnv('LANDING_URI');
 export const WIKI_URI = validateEnv('WIKI_URI');
 

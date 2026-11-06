@@ -107,10 +107,7 @@ export class ContactService {
   /**
    * Bulk-check which emails exist in the project — single query, safe for up to 500 addresses.
    */
-  public static async lookup(
-    projectId: string,
-    emails: string[],
-  ): Promise<{found: string[]; notFound: string[]}> {
+  public static async lookup(projectId: string, emails: string[]): Promise<{found: string[]; notFound: string[]}> {
     // Emails are stored normalized, so an exact `in` match uses the
     // `(projectId, email)` btree index instead of a full scan via ILIKE.
     const normalized = emails.map(e => this.normalizeEmail(e));
@@ -179,7 +176,9 @@ export class ContactService {
     incoming: Record<string, unknown>,
   ): Record<string, unknown> {
     const merged: Record<string, unknown> =
-      existing && typeof existing === 'object' && !Array.isArray(existing) ? {...(existing as Record<string, unknown>)} : {};
+      existing && typeof existing === 'object' && !Array.isArray(existing)
+        ? {...(existing as Record<string, unknown>)}
+        : {};
 
     const reservedFields = ['plunk_id', 'plunk_email', 'id', 'email', 'unsubscribeUrl', 'subscribeUrl', 'manageUrl'];
 
@@ -263,7 +262,10 @@ export class ContactService {
         try {
           await EventService.dispatchEvent(projectId, transitionEvent, contactId);
         } catch (dispatchError) {
-          signale.warn(`[CONTACT] ${transitionEvent} workflow dispatch failed (state and marker persisted):`, dispatchError);
+          signale.warn(
+            `[CONTACT] ${transitionEvent} workflow dispatch failed (state and marker persisted):`,
+            dispatchError,
+          );
         }
       }
 
@@ -356,7 +358,10 @@ export class ContactService {
           try {
             await EventService.dispatchEvent(projectId, transitionEvent, updated.id);
           } catch (dispatchError) {
-            signale.warn(`[CONTACT] ${transitionEvent} workflow dispatch failed (state and marker persisted):`, dispatchError);
+            signale.warn(
+              `[CONTACT] ${transitionEvent} workflow dispatch failed (state and marker persisted):`,
+              dispatchError,
+            );
           }
         }
 
@@ -522,13 +527,37 @@ export class ContactService {
    * PUBLIC: Unsubscribe a contact
    */
   public static async unsubscribe(contactId: string): Promise<Contact> {
-    const contact = await prisma.contact.update({
-      where: {id: contactId},
-      data: {subscribed: false},
+    // Mirror of subscribe(): the conditional update makes the transition atomic against
+    // concurrent calls (two overlapping one-click POSTs from a mailbox provider, a
+    // double-submitted form), so exactly one of them records the `contact.unsubscribed`
+    // event and the rest are no-ops. The event is written in the same transaction as
+    // the state flip so the two cannot drift apart.
+    const {contact, transitioned} = await prisma.$transaction(async tx => {
+      const transition = await tx.contact.updateMany({
+        where: {id: contactId, subscribed: true},
+        data: {subscribed: false},
+      });
+
+      const updated = await tx.contact.findUniqueOrThrow({where: {id: contactId}});
+
+      if (transition.count > 0) {
+        await tx.event.create({
+          data: {projectId: updated.projectId, contactId, name: 'contact.unsubscribed'},
+        });
+      }
+
+      return {contact: updated, transitioned: transition.count > 0};
     });
 
-    // Track unsubscription event
-    await EventService.trackEvent(contact.projectId, 'contact.unsubscribed', contactId);
+    // Workflow side effects run outside the transaction and are best-effort: their
+    // failure must not undo or hide the already-persisted state change.
+    if (transitioned) {
+      try {
+        await EventService.dispatchEvent(contact.projectId, 'contact.unsubscribed', contactId);
+      } catch (error) {
+        signale.warn('[CONTACT] contact.unsubscribed workflow dispatch failed (state persisted):', error);
+      }
+    }
 
     return contact;
   }

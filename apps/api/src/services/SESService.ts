@@ -2,7 +2,9 @@ import {SES} from '@aws-sdk/client-ses';
 import signale from 'signale';
 
 import {
+  API_URI,
   AWS_SES_ACCESS_KEY_ID,
+  isPlunkUnsubscribeBase,
   AWS_SES_REGION,
   AWS_SES_SECRET_ACCESS_KEY,
   MAIL_FROM_SUBDOMAIN,
@@ -92,14 +94,33 @@ export async function sendRawEmail({
   attachments,
   tracking = true,
 }: SendRawEmailParams): Promise<{messageId: string}> {
-  // Extract the full unsubscribe URL from the HTML href attribute.
-  // The URL may have been rewritten by compile() to use a custom base,
-  // so we extract it as-is instead of rebuilding from DASHBOARD_URI.
-  const unsubscribeMatch = /href="(https?:\/\/[^"]*\/unsubscribe\/[a-f\d-]+)"/.exec(content.html);
-
-  let unsubscribeHeader = '';
-  if (unsubscribeMatch?.[1]) {
-    unsubscribeHeader = `List-Unsubscribe: <${unsubscribeMatch[1]}>`;
+  // RFC 8058 one-click unsubscribe. Mail that carries Plunk's own unsubscribe link
+  // `<base>/unsubscribe/<contactId>` (marketing footer, or a template that placed
+  // {{unsubscribeUrl}} itself) advertises the one-click pair; the base may have been
+  // rewritten by compile() to a project's custom domain, so it is checked against
+  // every base Plunk writes rather than one fixed value. The header must point at
+  // the API's one-click endpoint (POST /unsubscribe/:id opts out with no
+  // interaction), not at the dashboard page the link opens: a provider POSTing to
+  // a page that only unsubscribes on a button click changes nothing. Gmail and
+  // Yahoo render their unsubscribe button only when both headers are present, and
+  // that button is what keeps recipients off the "report spam" button.
+  //
+  // A link Plunk does not manage (a headless sender's own list) is advertised
+  // as-is, as before, with no one-click claim: we cannot promise it honours a
+  // bare POST. Mail without any unsubscribe link gets no List-Unsubscribe header.
+  // The attribute may be quoted either way: Plunk's footer uses double quotes,
+  // a hand-written template may use single quotes around {{unsubscribeUrl}}.
+  const unsubscribeMatch = /href=(["'])(https?:\/\/[^"']*?)\/unsubscribe\/([a-f\d-]+)\1/.exec(content.html);
+  let unsubscribeHeaders: string[] = [];
+  if (unsubscribeMatch?.[2] && unsubscribeMatch[3]) {
+    const base = unsubscribeMatch[2];
+    const contactId = unsubscribeMatch[3];
+    unsubscribeHeaders = isPlunkUnsubscribeBase(base)
+      ? [
+          `List-Unsubscribe: <${API_URI.replace(/\/$/, '')}/unsubscribe/${contactId}>`,
+          'List-Unsubscribe-Post: List-Unsubscribe=One-Click',
+        ]
+      : [`List-Unsubscribe: <${base}/unsubscribe/${contactId}>`];
   }
 
   // Generate unique boundaries for multipart messages
@@ -133,13 +154,13 @@ export async function sendRawEmail({
     rootContentType = `multipart/related; boundary="${relatedBoundary}"`;
   }
 
-  // Build the additional headers (custom headers + List-Unsubscribe), filtering
+  // Build the additional headers (custom headers + the List-Unsubscribe pair), filtering
   // out empties so we never emit a blank line inside the header section.
   // Per RFC 5322 §2.1, a blank line terminates the header section, so any blank
   // line here would push subsequent headers (notably List-Unsubscribe) into the body.
   const extraHeaderLines = [
     ...(headers ? Object.entries(headers).map(([key, value]) => `${key}: ${value}`) : []),
-    ...(unsubscribeHeader ? [unsubscribeHeader] : []),
+    ...unsubscribeHeaders,
   ];
   const extraHeaders = extraHeaderLines.length > 0 ? `\n${extraHeaderLines.join('\n')}` : '';
 
