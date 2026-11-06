@@ -118,13 +118,6 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/plunk_test
           DIRECT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/plunk_test
 
-      - name: Create MinIO bucket
-        run: |
-          docker run --rm --network host \
-            --entrypoint /bin/sh minio/mc:latest \
-            -c "mc alias set local http://localhost:9000 plunk plunkminiopass && \
-                mc mb local/uploads --ignore-existing"
-
       - name: Start MinIO
         # Runs as a step instead of a service container: service containers cannot
         # override the image command, the MinIO image needs `server /data` to start,
