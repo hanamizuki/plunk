@@ -64,6 +64,12 @@ describe('sendRawEmail List-Unsubscribe headers (RFC 8058)', () => {
     for (const line of oneClickPair) expect(headers).toContain(line);
   });
 
+  it('matches a single-quoted href as well', async () => {
+    const headers = await headersFor(`<a href='${DASHBOARD_URI}/unsubscribe/${contactId}'>Unsubscribe</a>`);
+
+    for (const line of oneClickPair) expect(headers).toContain(line);
+  });
+
   it('advertises a link Plunk does not manage as-is, with no one-click claim', async () => {
     const external = 'https://external-list.example/unsubscribe/deadbeef';
     const headers = await headersFor(`<a href="${external}">Unsubscribe</a>`);

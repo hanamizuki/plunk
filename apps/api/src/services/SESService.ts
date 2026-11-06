@@ -108,11 +108,13 @@ export async function sendRawEmail({
   // A link Plunk does not manage (a headless sender's own list) is advertised
   // as-is, as before, with no one-click claim: we cannot promise it honours a
   // bare POST. Mail without any unsubscribe link gets no List-Unsubscribe header.
-  const unsubscribeMatch = /href="(https?:\/\/[^"]*?)\/unsubscribe\/([a-f\d-]+)"/.exec(content.html);
+  // The attribute may be quoted either way: Plunk's footer uses double quotes,
+  // a hand-written template may use single quotes around {{unsubscribeUrl}}.
+  const unsubscribeMatch = /href=(["'])(https?:\/\/[^"']*?)\/unsubscribe\/([a-f\d-]+)\1/.exec(content.html);
   let unsubscribeHeaders: string[] = [];
-  if (unsubscribeMatch?.[1] && unsubscribeMatch[2]) {
-    const base = unsubscribeMatch[1];
-    const contactId = unsubscribeMatch[2];
+  if (unsubscribeMatch?.[2] && unsubscribeMatch[3]) {
+    const base = unsubscribeMatch[2];
+    const contactId = unsubscribeMatch[3];
     unsubscribeHeaders = isPlunkUnsubscribeBase(base)
       ? [
           `List-Unsubscribe: <${API_URI.replace(/\/$/, '')}/unsubscribe/${contactId}>`,
