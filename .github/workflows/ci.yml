@@ -41,19 +41,6 @@ jobs:
         ports:
           - 6379:6379
 
-      minio:
-        image: minio/minio:edge-cicd
-        env:
-          MINIO_ROOT_USER: plunk
-          MINIO_ROOT_PASSWORD: plunkminiopass
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -135,6 +122,33 @@ jobs:
         run: |
           docker run --rm --network host \
             --entrypoint /bin/sh minio/mc:latest \
+            -c "mc alias set local http://localhost:9000 plunk plunkminiopass && \
+                mc mb local/uploads --ignore-existing"
+
+      - name: Start MinIO
+        # Runs as a step instead of a service container: service containers cannot
+        # override the image command, the MinIO image needs `server /data` to start,
+        # and the old minio/minio Docker Hub image is no longer pullable.
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=plunk \
+            -e MINIO_ROOT_PASSWORD=plunkminiopass \
+            pgsty/minio:RELEASE.2026-08-04T00-00-00Z server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+              echo "MinIO is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MinIO failed to become ready"
+          docker logs minio
+          exit 1
+
+      - name: Create MinIO bucket
+        run: |
+          docker run --rm --network host \
+            --entrypoint /bin/sh pgsty/mc:RELEASE.2026-09-16T00-00-00Z \
             -c "mc alias set local http://localhost:9000 plunk plunkminiopass && \
                 mc mb local/uploads --ignore-existing"
 
